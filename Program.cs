@@ -2,7 +2,7 @@
 // ChessGame - A two-player console chess application built with C# and .NET.
 // Supports basic chess moves, check/checkmate/stalemate detection,
 // move history, undo, captured-piece tracking, statistics, and JSON saves.
-// Special moves (castling, en passant, and pawn promotion) are not yet implemented.
+// Includes castling, en passant, and pawn promotion.
 
 using System;
 using System.Collections.Generic;
@@ -22,6 +22,11 @@ class Program
     static List<char> capturedPieces = new();
     static Stack<GameState> undoStack = new();
 
+    // Castling rights and the square available for an en passant capture.
+    static bool whiteKingSide = true, whiteQueenSide = true;
+    static bool blackKingSide = true, blackQueenSide = true;
+    static int enPassantRow = -1, enPassantCol = -1;
+
     /// <summary>
     /// Represents the serializable state of a chess game.
     /// Used for JSON persistence and undo snapshots.
@@ -32,6 +37,12 @@ class Program
         public bool WhiteTurn { get; set; }
         public List<string> History { get; set; } = new();
         public List<char> Captured { get; set; } = new();
+        public bool WhiteKingSide { get; set; }
+        public bool WhiteQueenSide { get; set; }
+        public bool BlackKingSide { get; set; }
+        public bool BlackQueenSide { get; set; }
+        public int EnPassantRow { get; set; } = -1;
+        public int EnPassantCol { get; set; } = -1;
     }
 
     /// <summary>
@@ -77,7 +88,7 @@ class Program
             Console.WriteLine(
                 "Commands: history | undo | captured | stats | save | load | new | exit");
 
-            Console.Write("Enter your move (e.g. e2 e4): ");
+            Console.Write("Enter move (e.g. e2 e4 or e7 e8 q): ");
 
             string input = (Console.ReadLine() ?? "").Trim();
             string command = input.ToLowerInvariant();
@@ -153,6 +164,9 @@ class Program
         moveHistory.Clear();
         capturedPieces.Clear();
         undoStack.Clear();
+        whiteKingSide = whiteQueenSide = true;
+        blackKingSide = blackQueenSide = true;
+        enPassantRow = enPassantCol = -1;
     }
 
     /// <summary>
@@ -180,23 +194,20 @@ class Program
     }
 
     /// <summary>
-    /// Parses a move, validates it, records an undo snapshot, and applies it.
+    /// Parses a move, validates it, saves an undo snapshot, and applies it.
+    /// Promotion syntax: "e7 e8 q" (q, r, b, or n); the default is queen.
     /// </summary>
-    /// <param name="input">A move such as "e2 e4".</param>
-    /// <returns>True if the move was accepted; otherwise, false.</returns>
     static bool MovePiece(string input)
     {
         string[] positions = input.ToLowerInvariant().Split(
             ' ', StringSplitOptions.RemoveEmptyEntries);
 
-        if (positions.Length != 2 ||
-            positions[0].Length != 2 ||
-            positions[1].Length != 2)
+        if ((positions.Length != 2 && positions.Length != 3) ||
+            positions[0].Length != 2 || positions[1].Length != 2)
             return false;
 
         int fromCol = positions[0][0] - 'a';
         int fromRow = 8 - (positions[0][1] - '0');
-
         int toCol = positions[1][0] - 'a';
         int toRow = 8 - (positions[1][1] - '0');
 
@@ -204,26 +215,88 @@ class Program
             !IsInsideBoard(toRow, toCol))
             return false;
 
+        char promotion = 'q';
+        if (positions.Length == 3)
+        {
+            if (positions[2].Length != 1 ||
+                !"qrbn".Contains(positions[2][0]))
+                return false;
+            promotion = positions[2][0];
+        }
+
+        char piece = board[fromRow, fromCol];
+        bool promotes = char.ToLowerInvariant(piece) == 'p' &&
+            toRow == (whiteTurn ? 0 : 7);
+        if (positions.Length == 3 && !promotes)
+            return false;
+
         if (!IsLegalMove(fromRow, fromCol, toRow, toCol, whiteTurn))
             return false;
 
-        // Save the position before modifying any game state.
         undoStack.Push(CreateSnapshot());
+        ApplyMove(fromRow, fromCol, toRow, toCol, promotion, true);
+        moveHistory.Add($"{positions[0]}-{positions[1]}" +
+            (promotes ? $"={char.ToUpperInvariant(promotion)}" : ""));
+        whiteTurn = !whiteTurn;
+        return true;
+    }
 
+    /// <summary>
+    /// Applies a move, including the rook movement during castling, en passant
+    /// captures, and promotion. Also updates rights needed by future moves.
+    /// </summary>
+    static void ApplyMove(int fromRow, int fromCol, int toRow, int toCol,
+        char promotion, bool recordCapture)
+    {
         char piece = board[fromRow, fromCol];
         char target = board[toRow, toCol];
+        bool isWhite = char.IsUpper(piece);
+        char type = char.ToLowerInvariant(piece);
 
-        if (target != '.')
-            capturedPieces.Add(target);
+        // A rook captured on its original square removes that castling right.
+        if (target == 'R' && toRow == 7 && toCol == 0) whiteQueenSide = false;
+        if (target == 'R' && toRow == 7 && toCol == 7) whiteKingSide = false;
+        if (target == 'r' && toRow == 0 && toCol == 0) blackQueenSide = false;
+        if (target == 'r' && toRow == 0 && toCol == 7) blackKingSide = false;
 
-        board[toRow, toCol] = piece;
+        // En passant removes the pawn beside the starting square.
+        if (type == 'p' && fromCol != toCol && target == '.')
+        {
+            target = board[fromRow, toCol];
+            board[fromRow, toCol] = '.';
+        }
+        if (recordCapture && target != '.') capturedPieces.Add(target);
+
         board[fromRow, fromCol] = '.';
+        board[toRow, toCol] = piece;
 
-        moveHistory.Add($"{positions[0]}-{positions[1]}");
+        // Castling moves the rook on the same rank as the king.
+        if (type == 'k' && Math.Abs(toCol - fromCol) == 2)
+        {
+            int rookFrom = toCol == 6 ? 7 : 0;
+            int rookTo = toCol == 6 ? 5 : 3;
+            board[fromRow, rookTo] = board[fromRow, rookFrom];
+            board[fromRow, rookFrom] = '.';
+        }
 
-        whiteTurn = !whiteTurn;
+        if (type == 'p' && toRow == (isWhite ? 0 : 7))
+            board[toRow, toCol] = isWhite
+                ? char.ToUpperInvariant(promotion) : promotion;
 
-        return true;
+        if (piece == 'K') whiteKingSide = whiteQueenSide = false;
+        if (piece == 'k') blackKingSide = blackQueenSide = false;
+        if (piece == 'R' && fromRow == 7 && fromCol == 0) whiteQueenSide = false;
+        if (piece == 'R' && fromRow == 7 && fromCol == 7) whiteKingSide = false;
+        if (piece == 'r' && fromRow == 0 && fromCol == 0) blackQueenSide = false;
+        if (piece == 'r' && fromRow == 0 && fromCol == 7) blackKingSide = false;
+
+        // En passant is available only immediately after a two-square pawn move.
+        enPassantRow = enPassantCol = -1;
+        if (type == 'p' && Math.Abs(toRow - fromRow) == 2)
+        {
+            enPassantRow = (fromRow + toRow) / 2;
+            enPassantCol = fromCol;
+        }
     }
 
     /// <summary>
@@ -236,12 +309,10 @@ class Program
     }
 
     /// <summary>
-    /// Checks piece ownership and movement rules, then temporarily makes
-    /// the move to ensure it does not leave the moving king in check.
+    /// Checks movement rules and simulates the complete move to prevent
+    /// exposing the moving player's king to check.
     /// </summary>
-    /// <returns>True when the requested move is legal.</returns>
-    static bool IsLegalMove(
-        int fromRow, int fromCol,
+    static bool IsLegalMove(int fromRow, int fromCol,
         int toRow, int toCol, bool isWhite)
     {
         char piece = board[fromRow, fromCol];
@@ -249,32 +320,33 @@ class Program
 
         if (piece == '.' || char.IsUpper(piece) != isWhite)
             return false;
-
         if (target != '.' && char.IsUpper(target) == isWhite)
             return false;
-
         if (char.ToLowerInvariant(target) == 'k')
             return false;
-
         if (!IsValidMove(fromRow, fromCol, toRow, toCol))
             return false;
 
-        // Simulate the move before committing it to the board.
-        board[toRow, toCol] = piece;
-        board[fromRow, fromCol] = '.';
+        // A king cannot castle out of, through, or into check.
+        if (char.ToLowerInvariant(piece) == 'k' &&
+            Math.Abs(toCol - fromCol) == 2)
+        {
+            int step = Math.Sign(toCol - fromCol);
+            if (IsKingInCheck(isWhite) ||
+                IsSquareAttacked(fromRow, fromCol + step, !isWhite))
+                return false;
+        }
 
-        bool kingInCheck = IsKingInCheck(isWhite);
-
-        // Always restore the original position after the safety check.
-        board[fromRow, fromCol] = piece;
-        board[toRow, toCol] = target;
-
-        return !kingInCheck;
+        GameState snapshot = CreateSnapshot();
+        ApplyMove(fromRow, fromCol, toRow, toCol, 'q', false);
+        bool inCheck = IsKingInCheck(isWhite);
+        RestoreSnapshot(snapshot);
+        return !inCheck;
     }
 
     /// <summary>
     /// Validates the movement pattern of a piece without checking king safety.
-    /// Special chess moves are not implemented in this version.
+    /// Handles castling and en passant; promotion is applied after validation.
     /// </summary>
     static bool IsValidMove(
         int fromRow, int fromCol,
@@ -309,9 +381,15 @@ class Program
                         return true;
                 }
 
-                return absCol == 1 &&
-                       rowDiff == direction &&
-                       target != '.';
+                if (absCol == 1 && rowDiff == direction)
+                {
+                    if (target != '.') return true;
+                    return toRow == enPassantRow &&
+                           toCol == enPassantCol &&
+                           board[fromRow, toCol] ==
+                               (char.IsUpper(piece) ? 'p' : 'P');
+                }
+                return false;
 
             case 'r':
                 return (rowDiff == 0 || colDiff == 0) &&
@@ -331,7 +409,28 @@ class Program
                        IsPathClear(fromRow, fromCol, toRow, toCol);
 
             case 'k':
-                return absRow <= 1 && absCol <= 1;
+                if (absRow <= 1 && absCol <= 1)
+                    return true;
+                if (rowDiff != 0 || absCol != 2 || fromCol != 4 ||
+                    fromRow != (char.IsUpper(piece) ? 7 : 0))
+                    return false;
+
+                bool kingSide = toCol == 6;
+                bool queenSide = toCol == 2;
+                if (!kingSide && !queenSide) return false;
+                bool allowed = char.IsUpper(piece)
+                    ? (kingSide ? whiteKingSide : whiteQueenSide)
+                    : (kingSide ? blackKingSide : blackQueenSide);
+                if (!allowed) return false;
+
+                int rookCol = kingSide ? 7 : 0;
+                if (board[fromRow, rookCol] !=
+                    (char.IsUpper(piece) ? 'R' : 'r'))
+                    return false;
+                int step = kingSide ? 1 : -1;
+                for (int col = fromCol + step; col != rookCol; col += step)
+                    if (board[fromRow, col] != '.') return false;
+                return true;
 
             default:
                 return false;
@@ -493,7 +592,13 @@ class Program
             Board = rows,
             WhiteTurn = whiteTurn,
             History = new List<string>(moveHistory),
-            Captured = new List<char>(capturedPieces)
+            Captured = new List<char>(capturedPieces),
+            WhiteKingSide = whiteKingSide,
+            WhiteQueenSide = whiteQueenSide,
+            BlackKingSide = blackKingSide,
+            BlackQueenSide = blackQueenSide,
+            EnPassantRow = enPassantRow,
+            EnPassantCol = enPassantCol
         };
     }
 
@@ -511,6 +616,12 @@ class Program
         whiteTurn = state.WhiteTurn;
         moveHistory = new List<string>(state.History);
         capturedPieces = new List<char>(state.Captured);
+        whiteKingSide = state.WhiteKingSide;
+        whiteQueenSide = state.WhiteQueenSide;
+        blackKingSide = state.BlackKingSide;
+        blackQueenSide = state.BlackQueenSide;
+        enPassantRow = state.EnPassantRow;
+        enPassantCol = state.EnPassantCol;
     }
 
     /// <summary>
@@ -663,6 +774,16 @@ class Program
                 throw new InvalidDataException("Invalid save file.");
             }
 
+            // Old saves lack special-move metadata; disable unavailable rights.
+            using (JsonDocument document = JsonDocument.Parse(json))
+            {
+                if (!document.RootElement.TryGetProperty("WhiteKingSide", out _))
+                {
+                    state.WhiteKingSide = state.WhiteQueenSide = false;
+                    state.BlackKingSide = state.BlackQueenSide = false;
+                    state.EnPassantRow = state.EnPassantCol = -1;
+                }
+            }
             RestoreSnapshot(state);
             undoStack.Clear();
 
