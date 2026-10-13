@@ -9,6 +9,8 @@ public class ChessGame
 {
     internal readonly ChessBoard board = new();
     private readonly MoveValidator validator;
+    private ChessAI? ai;
+    private bool playAgainstComputer = false;
     private bool whiteTurn = true;
     private List<string> moveHistory = new();
     private List<char> capturedPieces = new();
@@ -423,90 +425,121 @@ public class ChessGame
     /// <summary>
     /// Runs the game loop, handles commands, and checks for game-ending positions.
     /// </summary>
-    public void Run()
+    
+public void Run()
+{
+    NewGame();
+
+    Console.WriteLine("=== GAME MODE ===");
+    Console.WriteLine("1. Player vs Player");
+    Console.WriteLine("2. Player vs Computer");
+    Console.Write("Select game mode (1 or 2): ");
+
+    string mode = (Console.ReadLine() ?? "").Trim();
+
+    playAgainstComputer = mode == "2";
+
+    if (playAgainstComputer)
     {
-        NewGame();
+        ai = new ChessAI(this);
+        Console.WriteLine("You play as White. Computer plays as Black.");
+    }
 
-        while (true)
+    while (true)
+    {
+        Console.Clear();
+        DisplayBoard();
+
+        bool check = validator.IsKingInCheck(whiteTurn);
+
+        if (!validator.HasLegalMoves(whiteTurn))
         {
-            Console.Clear();
-            DisplayBoard();
+            Console.WriteLine(check
+                ? $"CHECKMATE! {(whiteTurn ? "Black" : "White")} wins!"
+                : "STALEMATE! The game is a draw.");
 
-            bool check = validator.IsKingInCheck(whiteTurn);
+            Console.WriteLine("Type 'new' to play again or 'exit'.");
 
-            if (!validator.HasLegalMoves(whiteTurn))
+            string endCommand = (Console.ReadLine() ?? "")
+                .Trim().ToLowerInvariant();
+
+            if (endCommand == "new")
             {
-                Console.WriteLine(check
-                    ? $"CHECKMATE! {(whiteTurn ? "Black" : "White")} wins!"
-                    : "STALEMATE! The game is a draw.");
-
-                Console.WriteLine("Type 'new' to play again or 'exit'.");
-
-                string endCommand = (Console.ReadLine() ?? "")
-                    .Trim().ToLowerInvariant();
-
-                if (endCommand == "new")
-                {
-                    NewGame();
-                    continue;
-                }
-
-                break;
+                NewGame();
+                continue;
             }
 
-            if (check)
-                Console.WriteLine("CHECK! Your king is under attack!");
+            break;
+        }
 
-            Console.WriteLine(
-                $"Current player: {(whiteTurn ? "White" : "Black")}");
+        if (check)
+            Console.WriteLine("CHECK! Your king is under attack!");
 
-            Console.WriteLine(
-                "Commands: history | undo | captured | stats | save | load | new | exit");
+        if (playAgainstComputer && !whiteTurn)
+        {
+            string? computerMove = ai!.GetMinimaxMove(false, depth: 2);
 
-            Console.Write("Enter move (e.g. e2 e4 or e7 e8 q): ");
-
-            string input = (Console.ReadLine() ?? "").Trim();
-            string command = input.ToLowerInvariant();
-
-            switch (command)
+            if (computerMove != null)
             {
-                case "exit":
-                    return;
-
-                case "new":
-                    NewGame();
-                    continue;
-
-                case "history":
-                    ShowHistory();
-                    continue;
-
-                case "undo":
-                    UndoMove();
-                    continue;
-
-                case "captured":
-                    ShowCapturedPieces();
-                    continue;
-
-                case "stats":
-                    ShowStatistics();
-                    continue;
-
-                case "save":
-                    SaveGame();
-                    continue;
-
-                case "load":
-                    LoadGame();
-                    continue;
-            }
-
-            if (!MovePiece(input))
-            {
-                Console.WriteLine("Invalid move!");
+                MovePiece(computerMove);
+                Console.WriteLine($"Computer played: {computerMove}");
                 Pause();
             }
+
+            continue;
+        }
+
+        Console.WriteLine(
+            $"Current player: {(whiteTurn ? "White" : "Black")}");
+
+        Console.WriteLine(
+            "Commands: history | undo | captured | stats | save | load | new | exit");
+
+        Console.Write("Enter move (e.g. e2 e4 or e7 e8 q): ");
+
+        string input = (Console.ReadLine() ?? "").Trim();
+        string command = input.ToLowerInvariant();
+
+        switch (command)
+        {
+            case "exit":
+                return;
+
+            case "new":
+                NewGame();
+                continue;
+
+            case "history":
+                ShowHistory();
+                continue;
+
+            case "undo":
+                UndoMove();
+                continue;
+
+            case "captured":
+                ShowCapturedPieces();
+                continue;
+
+            case "stats":
+                ShowStatistics();
+                continue;
+
+            case "save":
+                SaveGame();
+                continue;
+
+            case "load":
+                LoadGame();
+                continue;
+        }
+
+        if (!MovePiece(input))
+        {
+            Console.WriteLine("Invalid move!");
+            Pause();
         }
     }
+}
+
 }
