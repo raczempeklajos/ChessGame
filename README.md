@@ -1,36 +1,53 @@
-# ChessGame – C# Console Chess
 
-A two-player, console-based chess game developed in **C# using the .NET platform**.
+# ChessGame ♟️
 
-This project was created to strengthen my programming skills through the implementation of chess rules, move validation, game state management, and file-based persistence.
+A console-based chess game developed in C# using .NET 10.
+
+This project demonstrates object-oriented programming, chess rule validation, automated unit testing, and continuous integration with GitHub Actions.
 
 ## Features
 
-- **Interactive Chessboard** – An 8×8 board displayed in the terminal.
-- **Two-Player Gameplay** – Local gameplay with alternating turns.
-- **Move Validation** – Validates movement rules for each chess piece.
-- **King Safety** – Prevents moves that would leave the player's king in check.
-- **Check and Checkmate Detection** – Identifies when a king is under attack and when no legal moves remain.
-- **Stalemate Detection** – Recognizes positions where a player has no legal moves but is not in check.
-- **Move History** – Records previous moves.
-- **Undo Functionality** – Restores the previous game state.
-- **Captured Pieces** – Tracks captured pieces for both players.
-- **Game Statistics** – Displays move counts, captures, and the current player.
-- **Save and Load** – Saves and restores games using JSON serialization.
+- Two-player chess in the console
+- Standard chess piece movement
+- Turn-based gameplay
+- Legal move validation
+- Check, checkmate, and stalemate detection
+- Kingside and queenside castling
+- En passant captures
+- Pawn promotion
+- Move history
+- Undo functionality
+- Captured piece tracking
+- Game statistics
+- Save and load game progress using JSON
 
-## Technologies Used
+## Technologies
 
 - C#
-- .NET
-- Visual Studio Code
-- Git & GitHub
-- System.Text.Json
+- .NET 10
+- xUnit
+- Git and GitHub
+- GitHub Actions
+- JSON serialization
+
+## Project Architecture
+
+The application follows an object-oriented structure.
+
+| Class | Responsibility |
+|---|---|
+| `Program.cs` | Application entry point |
+| `ChessGame.cs` | Game flow and move execution |
+| `ChessBoard.cs` | Chessboard representation |
+| `MoveValidator.cs` | Chess rules and move validation |
+| `GameState.cs` | Game state management |
 
 ## Getting Started
 
-### Prerequisites
+### Requirements
 
-Install the [.NET SDK](https://dotnet.microsoft.com/download).
+- .NET 10 SDK
+- Terminal or Visual Studio Code
 
 ### Installation
 
@@ -54,9 +71,7 @@ dotnet run
 
 ## How to Play
 
-The chessboard uses standard chess coordinates, from `a1` to `h8`.
-
-Enter moves using the starting and destination squares separated by a space.
+The game uses standard chess coordinates.
 
 For example:
 
@@ -66,66 +81,58 @@ e7 e5
 g1 f3
 ```
 
-White pieces are represented by uppercase letters, while black pieces use lowercase letters.
+Players take turns entering their moves.
 
-| Symbol | Chess Piece |
-|---|---|
-| K / k | King |
-| Q / q | Queen |
-| R / r | Rook |
-| B / b | Bishop |
-| N / n | Knight |
-| P / p | Pawn |
+The application validates moves according to chess rules and prevents illegal moves.
 
-## Available Commands
+## Automated Testing
 
-| Command | Description |
-|---|---|
-| `history` | Display move history |
-| `undo` | Undo the last move |
-| `captured` | Display captured pieces |
-| `stats` | Show game statistics |
-| `save` | Save the current game to JSON |
-| `load` | Load a previously saved game |
-| `new` | Start a new game |
-| `exit` | Exit the application |
+The project includes 58 automated tests using xUnit.
 
-## Project Structure
+The tests cover:
 
-```text
-ChessGame/
-├── Program.cs
-├── ChessGame.csproj
-├── .gitignore
-└── README.md
+- Chessboard operations
+- Coordinate validation
+- Piece movement
+- Legal and illegal moves
+- Turn management
+- Castling
+- En passant
+- Pawn promotion
+- Check detection
+- Checkmate
+- Stalemate
+
+Run all tests:
+
+```bash
+dotnet test ChessGame.Tests/ChessGame.Tests.csproj
 ```
-## Game Preview
 
-![ChessGame Console Preview](screenshots/chess-game.png)
+## Continuous Integration
+
+The project uses GitHub Actions to automatically:
+
+1. Restore .NET dependencies
+2. Build the application
+3. Execute the xUnit test suite
+
+The workflow runs on pushes to the configured branches and pull requests targeting `main`.
 
 ## Future Improvements
 
-- Implement castling
-- Implement en passant
-- Implement pawn promotion
-- Add a computer opponent using chess AI
-- Implement additional draw conditions
-- Improve the user interface
-- Add automated tests
+- Improve test coverage and edge-case handling
+- Implement a computer opponent using the Minimax algorithm
+- Add difficulty levels
+- Introduce FEN and PGN support
+- Develop a graphical user interface
 
-## What I Learned
+## Author
 
-Developing this project has helped me practice:
+Ráczempek Lajos
 
-- C# programming and control flow
-- Multidimensional arrays and collections
-- Implementing rule-based algorithms
-- Managing and restoring application state
-- JSON serialization and file handling
-- Version control with Git and GitHub
+GitHub: https://github.com/raczempeklajos
 
-## Project Status
+## License
 
-**In Development**
-
-The application currently supports local two-player gameplay and the main chess movement rules. Special moves and additional game rules are planned for future versions.
+No license has been specified for this repository.
