@@ -46,6 +46,52 @@ public class ChessGame
 
 
     /// <summary>
+    /// Returns all legal destination squares for the selected piece.
+    /// Coordinates use algebraic notation, such as e2 or e4.
+    /// </summary>
+    public List<string> GetLegalMoves(string from)
+    {
+        List<string> legalMoves = new();
+
+        if (string.IsNullOrWhiteSpace(from) || from.Length != 2)
+            return legalMoves;
+
+        from = from.ToLowerInvariant();
+
+        int fromCol = from[0] - 'a';
+        int fromRow = 8 - (from[1] - '0');
+
+        if (!validator.IsInsideBoard(fromRow, fromCol))
+            return legalMoves;
+
+        char piece = board[fromRow, fromCol];
+
+        // Only the current player's pieces can be selected.
+        if (piece == '.' || char.IsUpper(piece) != whiteTurn)
+            return legalMoves;
+
+        // Check every destination square using the existing validator.
+        for (int toRow = 0; toRow < 8; toRow++)
+        {
+            for (int toCol = 0; toCol < 8; toCol++)
+            {
+                if (validator.IsLegalMove(
+                    fromRow, fromCol, toRow, toCol, whiteTurn))
+                {
+                    string coordinate =
+                        $"{(char)('a' + toCol)}{8 - toRow}";
+
+                    legalMoves.Add(coordinate);
+                }
+            }
+        }
+
+        return legalMoves;
+    }
+
+
+
+    /// <summary>
 
     /// Resets the board and clears all history for a new game.
 

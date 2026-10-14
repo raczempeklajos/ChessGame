@@ -159,4 +159,53 @@ public class GamesController : ControllerBase
             history = state.History
         });
     }
+
+
+    /// <summary>
+    /// Returns all legal destination squares for a selected piece.
+    /// </summary>
+    /// <param name="id">The unique identifier of the game.</param>
+    /// <param name="from">The source square in algebraic notation.</param>
+    /// <returns>
+    /// The legal destination squares, or an error if the game
+    /// does not exist or the source coordinate is invalid.
+    /// </returns>
+    [HttpGet("{id:guid}/legal-moves")]
+    public IActionResult GetLegalMoves(Guid id, [FromQuery] string? from)
+    {
+        if (!games.TryGetValue(id, out ChessGame? game))
+        {
+            return NotFound(new
+            {
+                message = "Game not found"
+            });
+        }
+
+        if (string.IsNullOrWhiteSpace(from) ||
+            from.Length != 2 ||
+            from[0] is < 'a' or > 'h' ||
+            from[1] is < '1' or > '8')
+        {
+            return BadRequest(new
+            {
+                message = "Invalid source square"
+            });
+        }
+
+        List<string> legalMoves;
+
+        // Synchronize access while the engine evaluates possible moves.
+        lock (game)
+        {
+            legalMoves = game.GetLegalMoves(from);
+        }
+
+        return Ok(new
+        {
+            from,
+            legalMoves
+        });
+    }
+
+
 }

@@ -1,0 +1,66 @@
+
+export interface GameState {
+  id: string;
+  board: string[];
+  currentPlayer: string;
+  history: string[];
+  message?: string;
+}
+
+const API_BASE = "/api/games";
+
+async function readResponse<T>(response: Response): Promise<T> {
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `API error: ${response.status}`);
+  }
+
+  return response.json() as Promise<T>;
+}
+
+export async function createGame(): Promise<GameState> {
+  const response = await fetch(API_BASE, {
+    method: "POST",
+  });
+
+  return readResponse<GameState>(response);
+}
+
+export async function getGame(gameId: string): Promise<GameState> {
+  const response = await fetch(`${API_BASE}/${gameId}`);
+  return readResponse<GameState>(response);
+}
+
+export async function makeMove(
+  gameId: string,
+  from: string,
+  to: string,
+  promotion?: string
+): Promise<GameState> {
+  const response = await fetch(`${API_BASE}/${gameId}/moves`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ from, to, promotion }),
+  });
+
+  return readResponse<GameState>(response);
+}
+
+
+export interface LegalMovesResponse {
+  from: string;
+  legalMoves: string[];
+}
+
+export async function getLegalMoves(
+  gameId: string,
+  from: string
+): Promise<LegalMovesResponse> {
+  const response = await fetch(
+    `${API_BASE}/${gameId}/legal-moves?from=${encodeURIComponent(from)}`
+  );
+
+  return readResponse<LegalMovesResponse>(response);
+}
