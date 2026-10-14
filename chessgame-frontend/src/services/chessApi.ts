@@ -82,11 +82,20 @@ export interface AiMoveResponse extends GameState {
   aiMove: string;
 }
 
+
+export type AiDifficulty = "easy" | "medium" | "hard";
+
+export interface AiMoveResponse extends GameState {
+  aiMove: string;
+  difficulty: AiDifficulty;
+}
+
 export async function makeAiMove(
-  gameId: string
+  gameId: string,
+  difficulty: AiDifficulty = "medium"
 ): Promise<AiMoveResponse> {
   const response = await fetch(
-    `/api/games/${gameId}/ai-move`,
+    `/api/games/${gameId}/ai-move?difficulty=${difficulty}`,
     {
       method: "POST",
     }

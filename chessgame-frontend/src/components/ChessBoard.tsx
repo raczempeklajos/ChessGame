@@ -6,6 +6,7 @@ import {
   makeAiMove,
   makeMove,
   undoMove,
+  type AiDifficulty,
   type GameState,
 } from "../services/chessApi";
 import "./ChessBoard.css";
@@ -56,6 +57,7 @@ function errorMessage(error: unknown, fallback: string): string {
 export default function ChessBoard() {
   const [game, setGame] = useState<GameState | null>(null);
   const [gameMode, setGameMode] = useState<GameMode>("pvp");
+  const [difficulty, setDifficulty] = useState<AiDifficulty>("medium");
   const [flipped, setFlipped] = useState(false);
 
   const [selectedSquare, setSelectedSquare] =
@@ -224,7 +226,8 @@ export default function ChessBoard() {
         setThinking(true);
 
         try {
-          const aiGame = await makeAiMove(updatedGame.id);
+          // Send the selected difficulty to the backend.
+          const aiGame = await makeAiMove(updatedGame.id, difficulty);
           setGame(aiGame);
         } catch (err) {
           setError(
@@ -345,7 +348,6 @@ export default function ChessBoard() {
     ? lastMove.match(/[a-h][1-8]/g)
     : null;
 
-  // Prevent crashes when the API omits captured pieces.
   const capturedPieces = game.captured ?? [];
 
   const whiteCaptured = capturedPieces.filter(
@@ -386,6 +388,29 @@ export default function ChessBoard() {
           Player vs Computer
         </button>
       </div>
+
+      {/* AI difficulty selector */}
+      {gameMode === "computer" && (
+        <div className="game-mode-selector">
+          <span>Computer difficulty:</span>
+
+          {(["easy", "medium", "hard"] as AiDifficulty[]).map(
+            (level) => (
+              <button
+                key={level}
+                type="button"
+                className={
+                  difficulty === level ? "mode-active" : ""
+                }
+                onClick={() => setDifficulty(level)}
+                disabled={busy}
+              >
+                {level.charAt(0).toUpperCase() + level.slice(1)}
+              </button>
+            )
+          )}
+        </div>
+      )}
 
       {/* Pawn promotion dialog */}
       {pendingPromotion && (

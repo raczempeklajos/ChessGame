@@ -287,74 +287,93 @@ public class GamesController : ControllerBase
     /// <summary>
     /// Makes a computer move using Minimax.
     /// </summary>
-    [HttpPost("{id:guid}/ai-move")]
-    public IActionResult MakeAiMove(Guid id)
+    
+[HttpPost("{id:guid}/ai-move")]
+public IActionResult MakeAiMove(
+    Guid id,
+    [FromQuery] string difficulty = "medium")
+{
+    if (!games.TryGetValue(id, out ChessGame? game))
     {
-        if (!games.TryGetValue(id, out ChessGame? game))
+        return NotFound(new { message = "Game not found" });
+    }
+
+    difficulty = difficulty.ToLowerInvariant();
+
+    if (difficulty is not ("easy" or "medium" or "hard"))
+    {
+        return BadRequest(new
         {
-            return NotFound(new { message = "Game not found" });
-        }
+            message = "Invalid difficulty. Use easy, medium, or hard."
+        });
+    }
 
-        lock (game)
+    lock (game)
+    {
+        // The computer plays with black pieces.
+        if (game.GetGameState().WhiteTurn)
         {
-            // The computer plays with black pieces.
-            if (game.GetGameState().WhiteTurn)
+            return BadRequest(new
             {
-                return BadRequest(new
-                {
-                    message = "It is White's turn"
-                });
-            }
-
-            string currentStatus = game.GetGameStatus();
-
-            if (currentStatus is "Checkmate" or "Stalemate")
-            {
-                return BadRequest(new
-                {
-                    message = "The game is already over"
-                });
-            }
-
-            ChessAI ai = new ChessAI(game);
-
-            // Minimax search with depth 2.
-            string? aiMove = ai.GetMinimaxMove(false, 2);
-
-            if (aiMove == null)
-            {
-                return BadRequest(new
-                {
-                    message = "No legal moves available"
-                });
-            }
-
-            bool success = game.MovePiece(aiMove);
-
-            if (!success)
-            {
-                return BadRequest(new
-                {
-                    message = "AI move could not be executed"
-                });
-            }
-
-            GameState state = game.GetGameState();
-            string status = game.GetGameStatus();
-
-            return Ok(new
-            {
-                id,
-                message = "AI move completed",
-                aiMove,
-                board = state.Board,
-                currentPlayer = state.WhiteTurn ? "White" : "Black",
-                history = state.History,
-                captured = state.Captured,
-                status,
-                gameOver = status is "Checkmate" or "Stalemate",
-                winner = GetWinner(status, state.WhiteTurn)
+                message = "It is White's turn"
             });
         }
+
+        string currentStatus = game.GetGameStatus();
+
+        if (currentStatus is "Checkmate" or "Stalemate")
+        {
+            return BadRequest(new
+            {
+                message = "The game is already over"
+            });
+        }
+
+        ChessAI ai = new ChessAI(game);
+
+        // Select the AI strategy based on difficulty.
+        string? aiMove = difficulty switch
+        {
+            "easy" => ai.GetRandomMove(false),
+            "medium" => ai.GetMinimaxMove(false, 2),
+            "hard" => ai.GetMinimaxMove(false, 3),
+            _ => null
+        };
+
+        if (aiMove == null)
+        {
+            return BadRequest(new
+            {
+                message = "No legal moves available"
+            });
+        }
+
+        if (!game.MovePiece(aiMove))
+        {
+            return BadRequest(new
+            {
+                message = "AI move could not be executed"
+            });
+        }
+
+        GameState state = game.GetGameState();
+        string status = game.GetGameStatus();
+
+        return Ok(new
+        {
+            id,
+            message = "AI move completed",
+            difficulty,
+            aiMove,
+            board = state.Board,
+            currentPlayer = state.WhiteTurn ? "White" : "Black",
+            history = state.History,
+            captured = state.Captured,
+            status,
+            gameOver = status is "Checkmate" or "Stalemate",
+            winner = GetWinner(status, state.WhiteTurn)
+        });
     }
+}
+
 }
