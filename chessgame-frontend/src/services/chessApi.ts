@@ -1,14 +1,20 @@
+export type AiDifficulty = "easy" | "medium" | "hard";
+export type TimeControl = 5 | 10 | 15;
 
 export interface GameState {
   id: string;
   board: string[];
-  currentPlayer: string;
+  currentPlayer: "White" | "Black";
   history: string[];
-  message?: string;
   captured: string[];
-  status: "Playing" | "Check" | "Checkmate" | "Stalemate";
+  message?: string | null;
+  status: "Playing" | "Check" | "Checkmate" | "Stalemate" | "Timeout";
   gameOver: boolean;
   winner: string | null;
+  gameStarted: boolean;
+  timeControlMinutes: number;
+  whiteTimeMs: number;
+  blackTimeMs: number;
 }
 
 export interface LegalMovesResponse {
@@ -16,10 +22,22 @@ export interface LegalMovesResponse {
   legalMoves: string[];
 }
 
+export interface AiMoveResponse extends GameState {
+  aiMove: string;
+  difficulty: AiDifficulty;
+}
+
 const API_BASE = "/api/games";
 
 async function readResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
+    const contentType = response.headers.get("content-type") ?? "";
+
+    if (contentType.includes("application/json")) {
+      const body: { message?: string } = await response.json();
+      throw new Error(body.message ?? `API error: ${response.status}`);
+    }
+
     const message = await response.text();
     throw new Error(message || `API error: ${response.status}`);
   }
@@ -37,6 +55,21 @@ export async function createGame(): Promise<GameState> {
 
 export async function getGame(gameId: string): Promise<GameState> {
   const response = await fetch(`${API_BASE}/${gameId}`);
+
+  return readResponse<GameState>(response);
+}
+
+export async function startGame(
+  gameId: string,
+  minutes: TimeControl
+): Promise<GameState> {
+  const response = await fetch(`${API_BASE}/${gameId}/start`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ minutes }),
+  });
 
   return readResponse<GameState>(response);
 }
@@ -69,25 +102,12 @@ export async function getLegalMoves(
   return readResponse<LegalMovesResponse>(response);
 }
 
-
 export async function undoMove(gameId: string): Promise<GameState> {
-  const response = await fetch(`/api/games/${gameId}/undo`, {
+  const response = await fetch(`${API_BASE}/${gameId}/undo`, {
     method: "POST",
   });
 
   return readResponse<GameState>(response);
-}
-
-export interface AiMoveResponse extends GameState {
-  aiMove: string;
-}
-
-
-export type AiDifficulty = "easy" | "medium" | "hard";
-
-export interface AiMoveResponse extends GameState {
-  aiMove: string;
-  difficulty: AiDifficulty;
 }
 
 export async function makeAiMove(
@@ -95,7 +115,7 @@ export async function makeAiMove(
   difficulty: AiDifficulty = "medium"
 ): Promise<AiMoveResponse> {
   const response = await fetch(
-    `/api/games/${gameId}/ai-move?difficulty=${difficulty}`,
+    `${API_BASE}/${gameId}/ai-move?difficulty=${difficulty}`,
     {
       method: "POST",
     }

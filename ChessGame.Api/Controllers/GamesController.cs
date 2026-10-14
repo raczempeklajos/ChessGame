@@ -1,123 +1,58 @@
-
 using Microsoft.AspNetCore.Mvc;
 using ChessGameApi.Models;
+using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 
 namespace ChessGameApi.Controllers;
 
-/// <summary>
-/// Provides REST API endpoints for creating, retrieving,
-/// and managing chess games.
-/// </summary>
 [ApiController]
 [Route("api/games")]
 public class GamesController : ControllerBase
 {
-    // Stores active chess games using unique identifiers.
-    private static readonly ConcurrentDictionary<Guid, ChessGame> games = new();
+    private static readonly ConcurrentDictionary<Guid, GameSession>
+        games = new();
 
-    /// <summary>
-    /// Retrieves the current state of an existing chess game.
-    /// </summary>
-    [HttpGet("{id:guid}")]
-    public IActionResult GetGame(Guid id)
+    private sealed class GameSession
     {
-        if (!games.TryGetValue(id, out ChessGame? game))
-        {
-            return NotFound(new
-            {
-                message = "Game not found"
-            });
-        }
-
-        GameState state;
-        string status;
-
-        lock (game)
-        {
-            state = game.GetGameState();
-            status = game.GetGameStatus();
-        }
-
-        return Ok(new
-        {
-            id,
-            board = state.Board,
-            currentPlayer = state.WhiteTurn ? "White" : "Black",
-            history = state.History,
-            captured = state.Captured,
-            status,
-            gameOver = status is "Checkmate" or "Stalemate",
-            winner = GetWinner(status, state.WhiteTurn)
-        });
+        public ChessGame Game { get; } = new();
+        public GameClock Clock { get; } = new();
     }
 
-    /// <summary>
-    /// Returns a chessboard in its standard starting position.
-    /// </summary>
-    [HttpGet("board")]
-    public IActionResult GetBoard()
+    public sealed class StartGameRequest
     {
-        var game = new ChessGame();
-        game.NewGame();
-
-        GameState state = game.GetGameState();
-        string status = game.GetGameStatus();
-
-        return Ok(new
-        {
-            board = state.Board,
-            currentPlayer = state.WhiteTurn ? "White" : "Black",
-            history = state.History,
-            captured = state.Captured,
-            status,
-            gameOver = status is "Checkmate" or "Stalemate",
-            winner = GetWinner(status, state.WhiteTurn)
-        });
+        public int Minutes { get; set; } = 10;
     }
 
-    /// <summary>
-    /// Creates a new chess game and assigns it a unique identifier.
-    /// </summary>
     [HttpPost]
     public IActionResult CreateGame()
     {
-        var game = new ChessGame();
-        game.NewGame();
+        var session = new GameSession();
+        session.Game.NewGame();
 
-        Guid gameId = Guid.NewGuid();
-        games.TryAdd(gameId, game);
+        Guid id = Guid.NewGuid();
+        games[id] = session;
 
-        GameState state;
-        string status;
-
-        lock (game)
-        {
-            state = game.GetGameState();
-            status = game.GetGameStatus();
-        }
-
-        return Ok(new
-        {
-            id = gameId,
-            message = "New chess game created",
-            board = state.Board,
-            currentPlayer = state.WhiteTurn ? "White" : "Black",
-            history = state.History,
-            captured = state.Captured,
-            status,
-            gameOver = status is "Checkmate" or "Stalemate",
-            winner = GetWinner(status, state.WhiteTurn)
-        });
+        return Ok(BuildResponse(
+            id,
+            session,
+            "New chess game created"
+        ));
     }
 
-    /// <summary>
-    /// Attempts to execute a chess move in an existing game.
-    /// </summary>
-    [HttpPost("{id:guid}/moves")]
-    public IActionResult MakeMove(Guid id, [FromBody] MoveRequest request)
+    [HttpGet("board")]
+    public IActionResult GetBoard()
     {
-        if (!games.TryGetValue(id, out ChessGame? game))
+        var session = new GameSession();
+        session.Game.NewGame();
+
+        return Ok(BuildResponse(Guid.Empty, session));
+    }
+
+    [HttpGet("{id:guid}")]
+    public IActionResult GetGame(Guid id)
+    {
+        if (!games.TryGetValue(id, out GameSession? session))
         {
             return NotFound(new
             {
@@ -125,8 +60,78 @@ public class GamesController : ControllerBase
             });
         }
 
-        if (string.IsNullOrWhiteSpace(request.From) ||
-            string.IsNullOrWhiteSpace(request.To))
+        lock (session)
+        {
+            session.Clock.Tick();
+
+            return Ok(BuildResponse(id, session));
+        }
+    }
+
+    [HttpPost("{id:guid}/start")]
+    public IActionResult StartGame(
+        Guid id,
+        [FromBody] StartGameRequest request
+    )
+    {
+        if (!games.TryGetValue(id, out GameSession? session))
+        {
+            return NotFound(new
+            {
+                message = "Game not found"
+            });
+        }
+
+        if (request.Minutes is not (5 or 10 or 15))
+        {
+            return BadRequest(new
+            {
+                message = "Time control must be 5, 10, or 15 minutes"
+            });
+        }
+
+        lock (session)
+        {
+            bool started = session.Clock.Start(
+                request.Minutes,
+                session.Game.GetGameState().WhiteTurn
+            );
+
+            if (!started)
+            {
+                return BadRequest(new
+                {
+                    message = "Game has already started"
+                });
+            }
+
+            return Ok(BuildResponse(
+                id,
+                session,
+                "Game started"
+            ));
+        }
+    }
+
+    [HttpPost("{id:guid}/moves")]
+    public IActionResult MakeMove(
+        Guid id,
+        [FromBody] MoveRequest request
+    )
+    {
+        if (!games.TryGetValue(id, out GameSession? session))
+        {
+            return NotFound(new
+            {
+                message = "Game not found"
+            });
+        }
+
+        if (
+            request is null ||
+            string.IsNullOrWhiteSpace(request.From) ||
+            string.IsNullOrWhiteSpace(request.To)
+        )
         {
             return BadRequest(new
             {
@@ -141,24 +146,21 @@ public class GamesController : ControllerBase
             move += $" {request.Promotion}";
         }
 
-        GameState state;
-        string status;
-
-        lock (game)
+        lock (session)
         {
-            // Prevent moves after checkmate or stalemate.
-            string currentStatus = game.GetGameStatus();
+            session.Clock.Tick();
 
-            if (currentStatus is "Checkmate" or "Stalemate")
+            if (Blocked(session, out string reason))
             {
                 return BadRequest(new
                 {
-                    message = "The game is already over",
-                    status = currentStatus
+                    message = reason
                 });
             }
 
-            if (!game.MovePiece(move))
+            GameState before = session.Game.GetGameState();
+
+            if (!session.Game.MovePiece(move))
             {
                 return BadRequest(new
                 {
@@ -166,31 +168,33 @@ public class GamesController : ControllerBase
                 });
             }
 
-            state = game.GetGameState();
-            status = game.GetGameStatus();
-        }
+            session.Clock.SaveBeforeMove(
+                before.History.Count
+            );
 
-        return Ok(new
-        {
-            id,
-            message = "Move completed",
-            board = state.Board,
-            currentPlayer = state.WhiteTurn ? "White" : "Black",
-            history = state.History,
-            captured = state.Captured,
-            status,
-            gameOver = status is "Checkmate" or "Stalemate",
-            winner = GetWinner(status, state.WhiteTurn)
-        });
+            GameState after = session.Game.GetGameState();
+            string status = session.Game.GetGameStatus();
+
+            session.Clock.CompleteMove(
+                after.WhiteTurn,
+                IsBoardGameOver(status)
+            );
+
+            return Ok(BuildResponse(
+                id,
+                session,
+                "Move completed"
+            ));
+        }
     }
 
-    /// <summary>
-    /// Returns all legal destination squares for a selected piece.
-    /// </summary>
     [HttpGet("{id:guid}/legal-moves")]
-    public IActionResult GetLegalMoves(Guid id, [FromQuery] string? from)
+    public IActionResult GetLegalMoves(
+        Guid id,
+        [FromQuery] string? from
+    )
     {
-        if (!games.TryGetValue(id, out ChessGame? game))
+        if (!games.TryGetValue(id, out GameSession? session))
         {
             return NotFound(new
             {
@@ -198,10 +202,12 @@ public class GamesController : ControllerBase
             });
         }
 
-        if (string.IsNullOrWhiteSpace(from) ||
+        if (
+            string.IsNullOrWhiteSpace(from) ||
             from.Length != 2 ||
             from[0] is < 'a' or > 'h' ||
-            from[1] is < '1' or > '8')
+            from[1] is < '1' or > '8'
+        )
         {
             return BadRequest(new
             {
@@ -209,56 +215,39 @@ public class GamesController : ControllerBase
             });
         }
 
-        List<string> legalMoves;
-        string status;
-
-        lock (game)
+        lock (session)
         {
-            status = game.GetGameStatus();
+            session.Clock.Tick();
 
-            legalMoves = status is "Checkmate" or "Stalemate"
-                ? new List<string>()
-                : game.GetLegalMoves(from);
+            List<string> legalMoves =
+                Blocked(session, out _)
+                    ? new List<string>()
+                    : session.Game.GetLegalMoves(from);
+
+            return Ok(new
+            {
+                from,
+                legalMoves
+            });
         }
-
-        return Ok(new
-        {
-            from,
-            legalMoves
-        });
     }
 
-    /// <summary>
-    /// Returns the winner if the game ended in checkmate.
-    /// </summary>
-    private static string? GetWinner(string status, bool whiteTurn)
-    {
-        if (status != "Checkmate")
-        {
-            return null;
-        }
-
-        // The player whose turn it is has been checkmated.
-        return whiteTurn ? "Black" : "White";
-    }
-
-    /// <summary>
-    /// Undoes the last move of an existing chess game.
-    /// </summary>
     [HttpPost("{id:guid}/undo")]
     public IActionResult UndoMove(Guid id)
     {
-        if (!games.TryGetValue(id, out ChessGame? game))
+        if (!games.TryGetValue(id, out GameSession? session))
         {
-            return NotFound(new { message = "Game not found" });
+            return NotFound(new
+            {
+                message = "Game not found"
+            });
         }
 
-        GameState state;
-        string status;
-
-        lock (game)
+        lock (session)
         {
-            if (!game.TryUndoMove())
+            session.Clock.Tick();
+
+            if (!session.Game.TryUndoMove())
             {
                 return BadRequest(new
                 {
@@ -266,114 +255,234 @@ public class GamesController : ControllerBase
                 });
             }
 
-            state = game.GetGameState();
-            status = game.GetGameStatus();
+            GameState state = session.Game.GetGameState();
+
+            session.Clock.RestoreAfterUndo(
+                state.History.Count,
+                state.WhiteTurn,
+                IsBoardGameOver(
+                    session.Game.GetGameStatus()
+                )
+            );
+
+            return Ok(BuildResponse(
+                id,
+                session,
+                "Last move undone"
+            ));
+        }
+    }
+
+    [HttpPost("{id:guid}/ai-move")]
+    public IActionResult MakeAiMove(
+        Guid id,
+        [FromQuery] string difficulty = "medium"
+    )
+    {
+        if (!games.TryGetValue(id, out GameSession? session))
+        {
+            return NotFound(new
+            {
+                message = "Game not found"
+            });
         }
 
-        return Ok(new
+        difficulty = (difficulty ?? "medium")
+            .ToLowerInvariant();
+
+        if (difficulty is not ("easy" or "medium" or "hard"))
+        {
+            return BadRequest(new
+            {
+                message =
+                    "Invalid difficulty. Use easy, medium, or hard."
+            });
+        }
+
+        lock (session)
+        {
+            session.Clock.Tick();
+
+            if (Blocked(session, out string reason))
+            {
+                return BadRequest(new
+                {
+                    message = reason
+                });
+            }
+
+            GameState before = session.Game.GetGameState();
+
+            if (before.WhiteTurn)
+            {
+                return BadRequest(new
+                {
+                    message = "It is White's turn"
+                });
+            }
+
+            var ai = new ChessAI(session.Game);
+
+            string? aiMove = difficulty switch
+            {
+                "easy" => ai.GetRandomMove(false),
+                "medium" => ai.GetMinimaxMove(false, 2),
+                "hard" => ai.GetMinimaxMove(false, 3),
+                _ => null
+            };
+
+            // AI computation consumes Black's time.
+            session.Clock.Tick();
+
+            if (session.Clock.TimeoutWinner is not null)
+            {
+                return BadRequest(new
+                {
+                    message = "Time is up",
+                    winner = session.Clock.TimeoutWinner
+                });
+            }
+
+            if (aiMove is null)
+            {
+                return BadRequest(new
+                {
+                    message = "No legal moves available"
+                });
+            }
+
+            if (!session.Game.MovePiece(aiMove))
+            {
+                return BadRequest(new
+                {
+                    message = "AI move could not be executed"
+                });
+            }
+
+            session.Clock.SaveBeforeMove(
+                before.History.Count
+            );
+
+            GameState after = session.Game.GetGameState();
+
+            session.Clock.CompleteMove(
+                after.WhiteTurn,
+                IsBoardGameOver(
+                    session.Game.GetGameStatus()
+                )
+            );
+
+            return Ok(BuildResponse(
+                id,
+                session,
+                "AI move completed",
+                difficulty,
+                aiMove
+            ));
+        }
+    }
+
+    private static bool Blocked(
+        GameSession session,
+        out string reason
+    )
+    {
+        if (!session.Clock.Started)
+        {
+            reason = "Game has not started";
+            return true;
+        }
+
+        if (session.Clock.TimeoutWinner is not null)
+        {
+            reason = "Time is up";
+            return true;
+        }
+
+        if (IsBoardGameOver(
+            session.Game.GetGameStatus()
+        ))
+        {
+            reason = "The game is already over";
+            return true;
+        }
+
+        reason = "";
+        return false;
+    }
+
+    private static bool IsBoardGameOver(string status)
+    {
+        return status is "Checkmate" or "Stalemate";
+    }
+
+    private static string? GetWinner(
+        string status,
+        bool whiteTurn
+    )
+    {
+        if (status != "Checkmate")
+        {
+            return null;
+        }
+
+        return whiteTurn ? "Black" : "White";
+    }
+
+    private static object BuildResponse(
+        Guid id,
+        GameSession session,
+        string? message = null,
+        string? difficulty = null,
+        string? aiMove = null
+    )
+    {
+        GameState state = session.Game.GetGameState();
+        string boardStatus = session.Game.GetGameStatus();
+
+        bool timedOut =
+            session.Clock.TimeoutWinner is not null;
+
+        string status = timedOut
+            ? "Timeout"
+            : boardStatus;
+
+        bool gameOver =
+            timedOut || IsBoardGameOver(boardStatus);
+
+        string? winner =
+            session.Clock.TimeoutWinner ??
+            GetWinner(boardStatus, state.WhiteTurn);
+
+        if (gameOver)
+        {
+            session.Clock.Stop();
+        }
+
+        return new
         {
             id,
-            message = "Last move undone",
-            board = state.Board,
-            currentPlayer = state.WhiteTurn ? "White" : "Black",
-            history = state.History,
-            captured = state.Captured,
-            status,
-            gameOver = status is "Checkmate" or "Stalemate",
-            winner = GetWinner(status, state.WhiteTurn)
-        });
-    }
-
-    /// <summary>
-    /// Makes a computer move using Minimax.
-    /// </summary>
-    
-[HttpPost("{id:guid}/ai-move")]
-public IActionResult MakeAiMove(
-    Guid id,
-    [FromQuery] string difficulty = "medium")
-{
-    if (!games.TryGetValue(id, out ChessGame? game))
-    {
-        return NotFound(new { message = "Game not found" });
-    }
-
-    difficulty = difficulty.ToLowerInvariant();
-
-    if (difficulty is not ("easy" or "medium" or "hard"))
-    {
-        return BadRequest(new
-        {
-            message = "Invalid difficulty. Use easy, medium, or hard."
-        });
-    }
-
-    lock (game)
-    {
-        // The computer plays with black pieces.
-        if (game.GetGameState().WhiteTurn)
-        {
-            return BadRequest(new
-            {
-                message = "It is White's turn"
-            });
-        }
-
-        string currentStatus = game.GetGameStatus();
-
-        if (currentStatus is "Checkmate" or "Stalemate")
-        {
-            return BadRequest(new
-            {
-                message = "The game is already over"
-            });
-        }
-
-        ChessAI ai = new ChessAI(game);
-
-        // Select the AI strategy based on difficulty.
-        string? aiMove = difficulty switch
-        {
-            "easy" => ai.GetRandomMove(false),
-            "medium" => ai.GetMinimaxMove(false, 2),
-            "hard" => ai.GetMinimaxMove(false, 3),
-            _ => null
-        };
-
-        if (aiMove == null)
-        {
-            return BadRequest(new
-            {
-                message = "No legal moves available"
-            });
-        }
-
-        if (!game.MovePiece(aiMove))
-        {
-            return BadRequest(new
-            {
-                message = "AI move could not be executed"
-            });
-        }
-
-        GameState state = game.GetGameState();
-        string status = game.GetGameStatus();
-
-        return Ok(new
-        {
-            id,
-            message = "AI move completed",
+            message,
             difficulty,
             aiMove,
             board = state.Board,
-            currentPlayer = state.WhiteTurn ? "White" : "Black",
+            currentPlayer = state.WhiteTurn
+                ? "White"
+                : "Black",
             history = state.History,
             captured = state.Captured,
             status,
-            gameOver = status is "Checkmate" or "Stalemate",
-            winner = GetWinner(status, state.WhiteTurn)
-        });
+            gameOver,
+            winner,
+            gameStarted = session.Clock.Started,
+            timeControlMinutes =
+                session.Clock.TimeControlMinutes,
+            whiteTimeMs = Math.Ceiling(
+                session.Clock.WhiteMilliseconds
+            ),
+            blackTimeMs = Math.Ceiling(
+                session.Clock.BlackMilliseconds
+            )
+        };
     }
-}
-
 }

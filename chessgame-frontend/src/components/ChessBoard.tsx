@@ -1,19 +1,31 @@
-
 import { useEffect, useRef, useState } from "react";
 import {
   createGame,
+  getGame,
   getLegalMoves,
   makeAiMove,
   makeMove,
+  startGame,
   undoMove,
   type AiDifficulty,
   type GameState,
+  type TimeControl,
 } from "../services/chessApi";
 import "./ChessBoard.css";
 
 const pieceSymbols: Record<string, string> = {
-  K: "♔", Q: "♕", R: "♖", B: "♗", N: "♘", P: "♙",
-  k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟",
+  K: "♔",
+  Q: "♕",
+  R: "♖",
+  B: "♗",
+  N: "♘",
+  P: "♙",
+  k: "♚",
+  q: "♛",
+  r: "♜",
+  b: "♝",
+  n: "♞",
+  p: "♟",
 };
 
 type SelectedSquare = {
@@ -28,18 +40,7 @@ type PendingPromotion = {
 };
 
 type GameMode = "pvp" | "computer";
-type TimeControl = 5 | 10 | 15;
 type PlayerColor = "White" | "Black";
-
-type ClockState = {
-  White: number;
-  Black: number;
-};
-
-type ClockSnapshot = {
-  moveCount: number;
-  clocks: ClockState;
-};
 
 const promotionPieces = [
   { value: "q", name: "Queen" },
@@ -56,34 +57,20 @@ function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
-function initialClocks(minutes: TimeControl): ClockState {
-  return {
-    White: minutes * 60 * 1000,
-    Black: minutes * 60 * 1000,
-  };
-}
-
 function formatTime(milliseconds: number): string {
-  const totalSeconds = Math.ceil(Math.max(0, milliseconds) / 1000);
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
+  const seconds = Math.ceil(Math.max(0, milliseconds) / 1000);
+  const minutes = Math.floor(seconds / 60);
 
   return `${String(minutes).padStart(2, "0")}:${String(
-    seconds
+    seconds % 60
   ).padStart(2, "0")}`;
 }
 
 export default function ChessBoard() {
   const [game, setGame] = useState<GameState | null>(null);
   const [gameMode, setGameMode] = useState<GameMode>("pvp");
-  const [gameStarted, setGameStarted] = useState(false);
   const [difficulty, setDifficulty] = useState<AiDifficulty>("medium");
   const [timeControl, setTimeControl] = useState<TimeControl>(10);
-  const [clocks, setClocks] = useState<ClockState>(() =>
-    initialClocks(10)
-  );
-  const [timeoutWinner, setTimeoutWinner] =
-    useState<PlayerColor | null>(null);
 
   const [flipped, setFlipped] = useState(false);
   const [selectedSquare, setSelectedSquare] =
@@ -91,6 +78,7 @@ export default function ChessBoard() {
   const [pendingPromotion, setPendingPromotion] =
     useState<PendingPromotion | null>(null);
   const [legalMoves, setLegalMoves] = useState<string[]>([]);
+
   const [loading, setLoading] = useState(true);
   const [moving, setMoving] = useState(false);
   const [loadingMoves, setLoadingMoves] = useState(false);
@@ -99,90 +87,34 @@ export default function ChessBoard() {
 
   const busyRef = useRef(false);
   const generationRef = useRef(0);
-  const clocksRef = useRef<ClockState>(initialClocks(10));
-  const activePlayerRef = useRef<PlayerColor>("White");
-  const lastTickRef = useRef<number | null>(null);
-  const clockRunningRef = useRef(false);
-  const timeoutRef = useRef(false);
-  const clockHistoryRef = useRef<ClockSnapshot[]>([]);
+  const gameRef = useRef<GameState | null>(null);
+  const pollingRef = useRef(false);
 
-  function updateClocks(next: ClockState) {
-    clocksRef.current = next;
-    setClocks(next);
+  function updateGame(next: GameState) {
+    gameRef.current = next;
+    setGame(next);
   }
 
-  function pauseClock() {
-    clockRunningRef.current = false;
-    lastTickRef.current = null;
-  }
-
-  function startClock(player: PlayerColor) {
-    activePlayerRef.current = player;
-    lastTickRef.current = performance.now();
-    clockRunningRef.current = true;
-  }
-
-  function resetClocks(minutes: TimeControl) {
-    pauseClock();
-    timeoutRef.current = false;
-    setTimeoutWinner(null);
-    clockHistoryRef.current = [];
-    updateClocks(initialClocks(minutes));
-  }
-
-  function advanceClock(now: number) {
-    if (!clockRunningRef.current || timeoutRef.current) return;
-
-    const previous = lastTickRef.current ?? now;
-    const elapsed = Math.max(0, now - previous);
-    lastTickRef.current = now;
-
-    if (elapsed === 0) return;
-
-    const player = activePlayerRef.current;
-    const remaining = Math.max(
-      0,
-      clocksRef.current[player] - elapsed
-    );
-
-    updateClocks({
-      ...clocksRef.current,
-      [player]: remaining,
-    });
-
-    if (remaining === 0) {
-      timeoutRef.current = true;
-      pauseClock();
-      setTimeoutWinner(player === "White" ? "Black" : "White");
-      setSelectedSquare(null);
-      setLegalMoves([]);
-      setPendingPromotion(null);
-    }
-  }
-
-  function saveClockSnapshot(moveCount: number) {
-    clockHistoryRef.current.push({
-      moveCount,
-      clocks: { ...clocksRef.current },
-    });
+  function clearSelection() {
+    setSelectedSquare(null);
+    setLegalMoves([]);
+    setPendingPromotion(null);
   }
 
   useEffect(() => {
     const generation = ++generationRef.current;
 
-    async function startGame() {
+    async function loadInitialGame() {
       try {
-        const newGame = await createGame();
+        const created = await createGame();
 
         if (generation === generationRef.current) {
-          setGame(newGame);
+          updateGame(created);
           setError("");
-          resetClocks(10);
-          setGameStarted(false);
         }
       } catch (err) {
         if (generation === generationRef.current) {
-          setError(errorMessage(err, "Failed to start game."));
+          setError(errorMessage(err, "Failed to create game."));
         }
       } finally {
         if (generation === generationRef.current) {
@@ -191,76 +123,103 @@ export default function ChessBoard() {
       }
     }
 
-    void startGame();
+    void loadInitialGame();
 
     return () => {
       generationRef.current++;
-      pauseClock();
     };
   }, []);
 
+  // The server is the authoritative source for clock values.
   useEffect(() => {
-    const interval = window.setInterval(() => {
-      advanceClock(performance.now());
-    }, 100);
+    const interval = window.setInterval(async () => {
+      const current = gameRef.current;
+
+      if (
+        !current ||
+        !current.gameStarted ||
+        current.gameOver ||
+        busyRef.current ||
+        pollingRef.current
+      ) {
+        return;
+      }
+
+      pollingRef.current = true;
+      const generation = generationRef.current;
+
+      try {
+        const updated = await getGame(current.id);
+
+        if (
+          generation === generationRef.current &&
+          gameRef.current?.id === current.id &&
+          !busyRef.current
+        ) {
+          updateGame(updated);
+
+          if (updated.gameOver) {
+            clearSelection();
+          }
+        }
+      } catch {
+        // A temporary polling error must not interrupt the game.
+      } finally {
+        pollingRef.current = false;
+      }
+    }, 1000);
 
     return () => window.clearInterval(interval);
   }, []);
 
   const busy = loading || moving || loadingMoves || thinking;
-  const gameFinished = Boolean(game?.gameOver || timeoutWinner);
+  const gameStarted = game?.gameStarted ?? false;
+  const gameFinished = game?.gameOver ?? false;
 
-  function clearSelection() {
-    setSelectedSquare(null);
-    setLegalMoves([]);
-    setPendingPromotion(null);
-  }
-
-  function handleStartGame() {
+  async function handleStartGame() {
     if (
       !game ||
       gameStarted ||
+      gameFinished ||
       busy ||
-      busyRef.current ||
-      game.gameOver ||
-      timeoutRef.current
+      busyRef.current
     ) {
       return;
     }
 
+    busyRef.current = true;
+    setMoving(true);
     setError("");
     clearSelection();
-    setGameStarted(true);
-    startClock(game.currentPlayer as PlayerColor);
+
+    try {
+      const updated = await startGame(game.id, timeControl);
+      updateGame(updated);
+    } catch (err) {
+      setError(errorMessage(err, "Failed to start game."));
+    } finally {
+      setMoving(false);
+      busyRef.current = false;
+    }
   }
 
-  async function startNewGame(
-    mode: GameMode,
-    minutes: TimeControl = timeControl
-  ) {
+  async function handleNewGame() {
     if (busyRef.current || busy) return;
 
     busyRef.current = true;
-    pauseClock();
+    generationRef.current++;
+
     setLoading(true);
     setError("");
     clearSelection();
 
     try {
-      const newGame = await createGame();
+      const created = await createGame();
 
-      setGame(newGame);
-      setGameMode(mode);
-      setTimeControl(minutes);
+      updateGame(created);
       setFlipped(false);
-      resetClocks(minutes);
-      setGameStarted(false);
     } catch (err) {
       setError(errorMessage(err, "Failed to create a new game."));
-
-      if (gameStarted && !timeoutRef.current && game && !game.gameOver) {
-        startClock(game.currentPlayer as PlayerColor);
-      }
     } finally {
       setLoading(false);
       busyRef.current = false;
@@ -272,56 +231,39 @@ export default function ChessBoard() {
       !game ||
       !gameStarted ||
       game.history.length === 0 ||
-      busyRef.current ||
       busy ||
+      busyRef.current ||
       pendingPromotion
     ) {
       return;
     }
 
     busyRef.current = true;
-    advanceClock(performance.now());
-    pauseClock();
     setMoving(true);
     setError("");
     clearSelection();
 
     try {
-      let updatedGame = await undoMove(game.id);
+      let updated = await undoMove(game.id);
 
+      // In computer mode, undo both the AI move and the
+      // preceding player move when possible.
       if (
         gameMode === "computer" &&
-        updatedGame.history.length > 0 &&
-        updatedGame.currentPlayer === "Black"
+        updated.history.length > 0 &&
+        updated.currentPlayer === "Black"
       ) {
-        updatedGame = await undoMove(game.id);
+        updated = await undoMove(game.id);
       }
 
-      const targetCount = updatedGame.history.length;
-      const snapshot = [...clockHistoryRef.current]
-        .reverse()
-        .find((item) => item.moveCount === targetCount);
-
-      if (snapshot) {
-        updateClocks({ ...snapshot.clocks });
-      }
-
-      clockHistoryRef.current = clockHistoryRef.current.filter(
-        (item) => item.moveCount < targetCount
-      );
-
-      timeoutRef.current = false;
-      setTimeoutWinner(null);
-      setGame(updatedGame);
-
-      if (!updatedGame.gameOver) {
-        startClock(updatedGame.currentPlayer as PlayerColor);
-      }
+      updateGame(updated);
     } catch (err) {
-      setError(errorMessage(err, "Failed to undo the last move."));
+      setError(errorMessage(err, "Failed to undo move."));
 
-      if (!timeoutRef.current && !game.gameOver) {
-        startClock(game.currentPlayer as PlayerColor);
+      try {
+        updateGame(await getGame(game.id));
+      } catch {
+        // Preserve the last known state if refreshing fails.
       }
     } finally {
       setMoving(false);
@@ -344,7 +286,7 @@ export default function ChessBoard() {
     try {
       const result = await getLegalMoves(currentGame.id, from);
 
-      if (!timeoutRef.current) {
+      if (gameRef.current?.id === currentGame.id) {
         setLegalMoves(result.legalMoves);
       }
     } catch (err) {
@@ -361,71 +303,37 @@ export default function ChessBoard() {
     to: string,
     promotion?: string
   ) {
-    if (busyRef.current || timeoutRef.current) return;
-
-    advanceClock(performance.now());
-    if (timeoutRef.current) return;
+    if (busyRef.current || currentGame.gameOver) return;
 
     busyRef.current = true;
     setMoving(true);
     setError("");
 
     try {
-      const moveCount = currentGame.history.length;
-
-      const updatedGame = await makeMove(
+      const updated = await makeMove(
         currentGame.id,
         from,
         to,
         promotion
       );
 
-      advanceClock(performance.now());
-
-      if (timeoutRef.current) {
-        setGame(updatedGame);
-        clearSelection();
-        return;
-      }
-
-      saveClockSnapshot(moveCount);
-      setGame(updatedGame);
+      updateGame(updated);
       clearSelection();
-
-      if (updatedGame.gameOver) {
-        pauseClock();
-        return;
-      }
-
-      startClock(updatedGame.currentPlayer as PlayerColor);
 
       if (
         gameMode === "computer" &&
-        updatedGame.currentPlayer === "Black"
+        !updated.gameOver &&
+        updated.currentPlayer === "Black"
       ) {
         setThinking(true);
 
         try {
-          const aiGame = await makeAiMove(
-            updatedGame.id,
+          const aiResult = await makeAiMove(
+            updated.id,
             difficulty
           );
 
-          advanceClock(performance.now());
-
-          if (timeoutRef.current) {
-            setGame(aiGame);
-            return;
-          }
-
-          saveClockSnapshot(updatedGame.history.length);
-          setGame(aiGame);
-
-          if (aiGame.gameOver) {
-            pauseClock();
-          } else {
-            startClock(aiGame.currentPlayer as PlayerColor);
-          }
+          updateGame(aiResult);
         } catch (err) {
           setError(
             errorMessage(
@@ -433,6 +341,13 @@ export default function ChessBoard() {
               "The computer could not make a move."
             )
           );
+
+          // Refresh the game in case the AI ran out of time.
+          try {
+            updateGame(await getGame(updated.id));
+          } catch {
+            // Preserve the last known game state.
+          }
         } finally {
           setThinking(false);
         }
@@ -440,6 +355,13 @@ export default function ChessBoard() {
     } catch (err) {
       setError(errorMessage(err, "Invalid move."));
       clearSelection();
+
+      // A rejected move may mean the clock expired.
+      try {
+        updateGame(await getGame(currentGame.id));
+      } catch {
+        // Preserve the last known game state.
+      }
     } finally {
       setMoving(false);
       busyRef.current = false;
@@ -472,6 +394,7 @@ export default function ChessBoard() {
       if (isOwnPiece) {
         await selectPiece(game, row, col);
       }
+
       return;
     }
 
@@ -511,6 +434,7 @@ export default function ChessBoard() {
         to: coordinate,
         isWhite: isWhiteTurn,
       });
+
       return;
     }
 
@@ -522,7 +446,7 @@ export default function ChessBoard() {
       !game ||
       !pendingPromotion ||
       busyRef.current ||
-      timeoutRef.current
+      game.gameOver
     ) {
       return;
     }
@@ -567,6 +491,15 @@ export default function ChessBoard() {
     (piece) => piece === piece.toUpperCase()
   );
 
+  const clocks: Record<PlayerColor, number> = {
+    White: gameStarted
+      ? game.whiteTimeMs
+      : timeControl * 60_000,
+    Black: gameStarted
+      ? game.blackTimeMs
+      : timeControl * 60_000,
+  };
+
   const boardDisabled =
     !gameStarted ||
     gameFinished ||
@@ -602,7 +535,7 @@ export default function ChessBoard() {
         </button>
       </div>
 
-      {/* AI difficulty selector */}
+      {/* Computer difficulty */}
       {gameMode === "computer" && (
         <div className="game-mode-selector">
           <span>Computer difficulty:</span>
@@ -626,7 +559,7 @@ export default function ChessBoard() {
         </div>
       )}
 
-      {/* Time control selector */}
+      {/* Time control */}
       <div className="game-mode-selector">
         <span>Time control:</span>
 
@@ -638,10 +571,7 @@ export default function ChessBoard() {
               className={
                 timeControl === minutes ? "mode-active" : ""
               }
-              onClick={() => {
-                setTimeControl(minutes);
-                resetClocks(minutes);
-              }}
+              onClick={() => setTimeControl(minutes)}
               disabled={busy || gameStarted}
               title="Choose time control before starting"
             >
@@ -651,7 +581,7 @@ export default function ChessBoard() {
         )}
       </div>
 
-      {/* Chess clocks */}
+      {/* Server-controlled chess clocks */}
       <div className="chess-clocks" aria-label="Chess clocks">
         {(["White", "Black"] as PlayerColor[]).map(
           (player) => {
@@ -675,6 +605,7 @@ export default function ChessBoard() {
                 <span className="clock-player">
                   {player}
                 </span>
+
                 <strong className="clock-time">
                   {formatTime(clocks[player])}
                 </strong>
@@ -684,7 +615,7 @@ export default function ChessBoard() {
         )}
       </div>
 
-      {/* Pawn promotion dialog */}
+      {/* Pawn promotion */}
       {pendingPromotion && (
         <div className="promotion-overlay">
           <div
@@ -722,16 +653,16 @@ export default function ChessBoard() {
       )}
 
       {/* Game status */}
-      {timeoutWinner && (
+      {game.status === "Timeout" && (
         <div
           className="game-alert game-over-alert"
           role="status"
         >
-          Time is up! {timeoutWinner} wins on time.
+          Time is up! {game.winner} wins on time.
         </div>
       )}
 
-      {!timeoutWinner && game.status === "Check" && (
+      {game.status === "Check" && (
         <div
           className="game-alert check-alert"
           role="status"
@@ -740,7 +671,7 @@ export default function ChessBoard() {
         </div>
       )}
 
-      {!timeoutWinner && game.status === "Checkmate" && (
+      {game.status === "Checkmate" && (
         <div
           className="game-alert game-over-alert"
           role="status"
@@ -749,7 +680,7 @@ export default function ChessBoard() {
         </div>
       )}
 
-      {!timeoutWinner && game.status === "Stalemate" && (
+      {game.status === "Stalemate" && (
         <div
           className="game-alert game-over-alert"
           role="status"
@@ -758,19 +689,19 @@ export default function ChessBoard() {
         </div>
       )}
 
-      {thinking && !timeoutWinner && (
+      {thinking && !gameFinished && (
         <div className="game-alert" role="status">
           Computer is thinking...
         </div>
       )}
 
-      {/* Start the game only after selecting the settings */}
-      {!gameStarted && !game.gameOver && (
+      {/* Start Game */}
+      {!gameStarted && !gameFinished && (
         <div className="game-status">
           <button
             type="button"
             className="new-game-button"
-            onClick={handleStartGame}
+            onClick={() => void handleStartGame()}
             disabled={busy}
           >
             Start Game
@@ -788,7 +719,7 @@ export default function ChessBoard() {
         <button
           type="button"
           className="new-game-button"
-          onClick={() => void startNewGame(gameMode)}
+          onClick={() => void handleNewGame()}
           disabled={busy}
         >
           {loading ? "Starting..." : "New Game"}
@@ -821,15 +752,15 @@ export default function ChessBoard() {
       </div>
 
       {/* Chess board */}
-        <div
-          className="chess-board"
-          role="group"
-          aria-label="Chess board"
-        >
-          {(flipped
-            ? [...game.board].reverse()
-            : game.board
-          ).map((boardRow, displayRow) =>
+      <div
+        className="chess-board"
+        role="group"
+        aria-label="Chess board"
+      >
+        {(flipped
+          ? [...game.board].reverse()
+          : game.board
+        ).map((boardRow, displayRow) =>
           (flipped
             ? boardRow.split("").reverse()
             : boardRow.split("")
@@ -944,7 +875,7 @@ export default function ChessBoard() {
         </div>
       </div>
 
-      {/* Error messages */}
+      {/* Errors */}
       {error && (
         <p className="game-error" role="alert">
           {error}
