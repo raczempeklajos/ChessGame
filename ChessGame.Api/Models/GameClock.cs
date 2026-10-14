@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 
 namespace ChessGameApi.Models;
 
@@ -32,6 +33,7 @@ public sealed class GameClock
         snapshots.Clear();
 
         lastTimestamp = Stopwatch.GetTimestamp();
+
         return true;
     }
 
@@ -47,6 +49,14 @@ public sealed class GameClock
             Stopwatch.Frequency;
 
         lastTimestamp = now;
+
+        ConsumeElapsed(elapsed);
+    }
+
+    private void ConsumeElapsed(double elapsed)
+    {
+        if (!Running || elapsed <= 0)
+            return;
 
         if (WhiteToMove)
         {
@@ -87,7 +97,10 @@ public sealed class GameClock
     )
     {
         WhiteToMove = whiteToMove;
-        Running = !gameOver && TimeoutWinner is null;
+        Running = Started &&
+                  !gameOver &&
+                  TimeoutWinner is null;
+
         lastTimestamp = Stopwatch.GetTimestamp();
     }
 
@@ -120,6 +133,87 @@ public sealed class GameClock
         TimeoutWinner = null;
         WhiteToMove = whiteToMove;
         Running = Started && !gameOver;
+
+        lastTimestamp = Stopwatch.GetTimestamp();
+    }
+
+    public GameClockPersistenceState ExportPersistenceState()
+    {
+        Tick();
+
+        return new GameClockPersistenceState
+        {
+            TimeControlMinutes = TimeControlMinutes,
+            WhiteMilliseconds = WhiteMilliseconds,
+            BlackMilliseconds = BlackMilliseconds,
+            Started = Started,
+            Running = Running,
+            TimeoutWinner = TimeoutWinner,
+            WhiteToMove = WhiteToMove,
+            SavedAtUtc = DateTime.UtcNow,
+
+            Snapshots = snapshots.Select(
+                snapshot => new GameClockSnapshotState
+                {
+                    MoveCount = snapshot.MoveCount,
+                    WhiteMilliseconds = snapshot.WhiteMilliseconds,
+                    BlackMilliseconds = snapshot.BlackMilliseconds
+                }
+            ).ToList()
+        };
+    }
+
+    public void ImportPersistenceState(
+        GameClockPersistenceState savedState
+    )
+    {
+        ArgumentNullException.ThrowIfNull(savedState);
+
+        if (savedState.TimeControlMinutes is not (5 or 10 or 15))
+            throw new ArgumentException("Invalid time control.");
+
+        if (!double.IsFinite(savedState.WhiteMilliseconds) ||
+            !double.IsFinite(savedState.BlackMilliseconds) ||
+            savedState.WhiteMilliseconds < 0 ||
+            savedState.BlackMilliseconds < 0)
+        {
+            throw new ArgumentException("Invalid clock values.");
+        }
+
+        TimeControlMinutes = savedState.TimeControlMinutes;
+        WhiteMilliseconds = savedState.WhiteMilliseconds;
+        BlackMilliseconds = savedState.BlackMilliseconds;
+        Started = savedState.Started;
+        Running = savedState.Running;
+        TimeoutWinner = savedState.TimeoutWinner;
+        WhiteToMove = savedState.WhiteToMove;
+
+        snapshots.Clear();
+
+        foreach (GameClockSnapshotState snapshot in
+                 savedState.Snapshots ?? new())
+        {
+            snapshots.Add(
+                new ClockSnapshot(
+                    snapshot.MoveCount,
+                    snapshot.WhiteMilliseconds,
+                    snapshot.BlackMilliseconds
+                )
+            );
+        }
+
+        // Account for time elapsed while the backend was offline.
+        if (Running && savedState.SavedAtUtc != default)
+        {
+            double elapsed = Math.Max(
+                0,
+                (DateTime.UtcNow - savedState.SavedAtUtc)
+                    .TotalMilliseconds
+            );
+
+            ConsumeElapsed(elapsed);
+        }
+
         lastTimestamp = Stopwatch.GetTimestamp();
     }
 

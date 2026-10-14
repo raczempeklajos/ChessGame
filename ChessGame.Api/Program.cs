@@ -1,37 +1,44 @@
-
 var builder = WebApplication.CreateBuilder(args);
 
-// Register MVC controllers to handle incoming HTTP requests.
+// Register MVC controllers.
 builder.Services.AddControllers();
 
-// Register OpenAPI services for API documentation.
+// Register OpenAPI services.
 builder.Services.AddOpenApi();
 
-// Build the web application with the configured services.
+// Allow the local React development server.
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("ReactFrontend", policy =>
+    {
+        policy
+            .WithOrigins(
+                "http://localhost:5173",
+                "http://127.0.0.1:5173"
+            )
+            .AllowAnyHeader()
+            .AllowAnyMethod();
+    });
+});
+
 var app = builder.Build();
 
-// Expose the OpenAPI document only in the development environment.
+// Expose OpenAPI in development.
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
 }
 
-// HTTPS redirection is currently disabled for local development.
-// app.UseHttpsRedirection();
+// Enable CORS before authorization and controllers.
+app.UseCors("ReactFrontend");
 
-// Add authorization middleware to the HTTP request pipeline.
 app.UseAuthorization();
 
-// Map controller routes to their corresponding API endpoints.
 app.MapControllers();
 
-// Start the web server and begin processing incoming requests.
 app.Run();
 
 namespace ChessGameApi
 {
-    /// <summary>
-    /// Exposes the application entry point to the integration test project.
-    /// </summary>
     public partial class Program { }
 }

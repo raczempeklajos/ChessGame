@@ -44,6 +44,29 @@ public class ChessGame
         return CreateSnapshot();
     }
 
+    public ChessGamePersistenceState ExportPersistenceState()
+{
+    return new ChessGamePersistenceState
+    {
+        CurrentState = CreateSnapshot(),
+        UndoHistory = undoStack.Reverse().ToList()
+    };
+}
+
+public void ImportPersistenceState(ChessGamePersistenceState savedState)
+{
+    if (savedState is null || savedState.CurrentState is null)
+    {
+        throw new ArgumentException("Invalid saved game state.");
+    }
+
+    RestoreSnapshot(savedState.CurrentState);
+
+    undoStack = new Stack<GameState>(
+        savedState.UndoHistory ?? new List<GameState>()
+    );
+}
+
 
     /// <summary>
     /// Returns all legal destination squares for the selected piece.

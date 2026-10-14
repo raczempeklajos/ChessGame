@@ -1,8 +1,10 @@
 using Microsoft.AspNetCore.Mvc;
+using ChessGameApi.Data;
 using ChessGameApi.Models;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Text.Json;
 
 namespace ChessGameApi.Controllers;
 
@@ -10,8 +12,14 @@ namespace ChessGameApi.Controllers;
 [Route("api/games")]
 public class GamesController : ControllerBase
 {
-    private static readonly ConcurrentDictionary<Guid, GameSession>
-        games = new();
+    private static readonly ConcurrentDictionary<Guid, GameSession> games = new();
+
+    private static readonly SqliteGameRepository repository = new();
+
+    private static readonly JsonSerializerOptions jsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
 
     private sealed class GameSession
     {
@@ -24,6 +32,61 @@ public class GamesController : ControllerBase
         public int Minutes { get; set; } = 10;
     }
 
+    private static GameSession? FindSession(Guid id)
+    {
+        if (games.TryGetValue(id, out GameSession? existing))
+            return existing;
+
+        string? json = repository.Load(id);
+
+        if (json is null)
+            return null;
+
+        SavedGameSession? saved;
+
+        try
+        {
+            saved = JsonSerializer.Deserialize<SavedGameSession>(
+                json,
+                jsonOptions
+            );
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+
+        if (saved?.Game is null || saved.Clock is null)
+            return null;
+
+        var restored = new GameSession();
+
+        try
+        {
+            restored.Game.ImportPersistenceState(saved.Game);
+            restored.Clock.ImportPersistenceState(saved.Clock);
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
+
+        return games.GetOrAdd(id, restored);
+    }
+
+    private static void SaveSession(Guid id, GameSession session)
+    {
+        var saved = new SavedGameSession
+        {
+            Game = session.Game.ExportPersistenceState(),
+            Clock = session.Clock.ExportPersistenceState()
+        };
+
+        string json = JsonSerializer.Serialize(saved, jsonOptions);
+
+        repository.Save(id, json);
+    }
+
     [HttpPost]
     public IActionResult CreateGame()
     {
@@ -33,11 +96,14 @@ public class GamesController : ControllerBase
         Guid id = Guid.NewGuid();
         games[id] = session;
 
-        return Ok(BuildResponse(
-            id,
-            session,
-            "New chess game created"
-        ));
+        lock (session)
+        {
+            return Ok(BuildResponse(
+                id,
+                session,
+                "New chess game created"
+            ));
+        }
     }
 
     [HttpGet("board")]
@@ -52,13 +118,10 @@ public class GamesController : ControllerBase
     [HttpGet("{id:guid}")]
     public IActionResult GetGame(Guid id)
     {
-        if (!games.TryGetValue(id, out GameSession? session))
-        {
-            return NotFound(new
-            {
-                message = "Game not found"
-            });
-        }
+        GameSession? session = FindSession(id);
+
+        if (session is null)
+            return GameNotFound();
 
         lock (session)
         {
@@ -74,15 +137,12 @@ public class GamesController : ControllerBase
         [FromBody] StartGameRequest request
     )
     {
-        if (!games.TryGetValue(id, out GameSession? session))
-        {
-            return NotFound(new
-            {
-                message = "Game not found"
-            });
-        }
+        GameSession? session = FindSession(id);
 
-        if (request.Minutes is not (5 or 10 or 15))
+        if (session is null)
+            return GameNotFound();
+
+        if (request is null || request.Minutes is not (5 or 10 or 15))
         {
             return BadRequest(new
             {
@@ -119,13 +179,10 @@ public class GamesController : ControllerBase
         [FromBody] MoveRequest request
     )
     {
-        if (!games.TryGetValue(id, out GameSession? session))
-        {
-            return NotFound(new
-            {
-                message = "Game not found"
-            });
-        }
+        GameSession? session = FindSession(id);
+
+        if (session is null)
+            return GameNotFound();
 
         if (
             request is null ||
@@ -142,9 +199,7 @@ public class GamesController : ControllerBase
         string move = $"{request.From} {request.To}";
 
         if (!string.IsNullOrWhiteSpace(request.Promotion))
-        {
             move += $" {request.Promotion}";
-        }
 
         lock (session)
         {
@@ -152,6 +207,8 @@ public class GamesController : ControllerBase
 
             if (Blocked(session, out string reason))
             {
+                SaveSession(id, session);
+
                 return BadRequest(new
                 {
                     message = reason
@@ -162,22 +219,21 @@ public class GamesController : ControllerBase
 
             if (!session.Game.MovePiece(move))
             {
+                SaveSession(id, session);
+
                 return BadRequest(new
                 {
                     message = "Invalid move"
                 });
             }
 
-            session.Clock.SaveBeforeMove(
-                before.History.Count
-            );
+            session.Clock.SaveBeforeMove(before.History.Count);
 
             GameState after = session.Game.GetGameState();
-            string status = session.Game.GetGameStatus();
 
             session.Clock.CompleteMove(
                 after.WhiteTurn,
-                IsBoardGameOver(status)
+                IsBoardGameOver(session.Game.GetGameStatus())
             );
 
             return Ok(BuildResponse(
@@ -194,13 +250,10 @@ public class GamesController : ControllerBase
         [FromQuery] string? from
     )
     {
-        if (!games.TryGetValue(id, out GameSession? session))
-        {
-            return NotFound(new
-            {
-                message = "Game not found"
-            });
-        }
+        GameSession? session = FindSession(id);
+
+        if (session is null)
+            return GameNotFound();
 
         if (
             string.IsNullOrWhiteSpace(from) ||
@@ -224,6 +277,8 @@ public class GamesController : ControllerBase
                     ? new List<string>()
                     : session.Game.GetLegalMoves(from);
 
+            SaveSession(id, session);
+
             return Ok(new
             {
                 from,
@@ -235,13 +290,10 @@ public class GamesController : ControllerBase
     [HttpPost("{id:guid}/undo")]
     public IActionResult UndoMove(Guid id)
     {
-        if (!games.TryGetValue(id, out GameSession? session))
-        {
-            return NotFound(new
-            {
-                message = "Game not found"
-            });
-        }
+        GameSession? session = FindSession(id);
+
+        if (session is null)
+            return GameNotFound();
 
         lock (session)
         {
@@ -249,6 +301,8 @@ public class GamesController : ControllerBase
 
             if (!session.Game.TryUndoMove())
             {
+                SaveSession(id, session);
+
                 return BadRequest(new
                 {
                     message = "No moves to undo"
@@ -260,9 +314,7 @@ public class GamesController : ControllerBase
             session.Clock.RestoreAfterUndo(
                 state.History.Count,
                 state.WhiteTurn,
-                IsBoardGameOver(
-                    session.Game.GetGameStatus()
-                )
+                IsBoardGameOver(session.Game.GetGameStatus())
             );
 
             return Ok(BuildResponse(
@@ -279,23 +331,18 @@ public class GamesController : ControllerBase
         [FromQuery] string difficulty = "medium"
     )
     {
-        if (!games.TryGetValue(id, out GameSession? session))
-        {
-            return NotFound(new
-            {
-                message = "Game not found"
-            });
-        }
+        GameSession? session = FindSession(id);
 
-        difficulty = (difficulty ?? "medium")
-            .ToLowerInvariant();
+        if (session is null)
+            return GameNotFound();
+
+        difficulty = (difficulty ?? "medium").ToLowerInvariant();
 
         if (difficulty is not ("easy" or "medium" or "hard"))
         {
             return BadRequest(new
             {
-                message =
-                    "Invalid difficulty. Use easy, medium, or hard."
+                message = "Invalid difficulty. Use easy, medium, or hard."
             });
         }
 
@@ -305,6 +352,8 @@ public class GamesController : ControllerBase
 
             if (Blocked(session, out string reason))
             {
+                SaveSession(id, session);
+
                 return BadRequest(new
                 {
                     message = reason
@@ -315,6 +364,8 @@ public class GamesController : ControllerBase
 
             if (before.WhiteTurn)
             {
+                SaveSession(id, session);
+
                 return BadRequest(new
                 {
                     message = "It is White's turn"
@@ -336,6 +387,8 @@ public class GamesController : ControllerBase
 
             if (session.Clock.TimeoutWinner is not null)
             {
+                SaveSession(id, session);
+
                 return BadRequest(new
                 {
                     message = "Time is up",
@@ -345,6 +398,8 @@ public class GamesController : ControllerBase
 
             if (aiMove is null)
             {
+                SaveSession(id, session);
+
                 return BadRequest(new
                 {
                     message = "No legal moves available"
@@ -353,23 +408,21 @@ public class GamesController : ControllerBase
 
             if (!session.Game.MovePiece(aiMove))
             {
+                SaveSession(id, session);
+
                 return BadRequest(new
                 {
                     message = "AI move could not be executed"
                 });
             }
 
-            session.Clock.SaveBeforeMove(
-                before.History.Count
-            );
+            session.Clock.SaveBeforeMove(before.History.Count);
 
             GameState after = session.Game.GetGameState();
 
             session.Clock.CompleteMove(
                 after.WhiteTurn,
-                IsBoardGameOver(
-                    session.Game.GetGameStatus()
-                )
+                IsBoardGameOver(session.Game.GetGameStatus())
             );
 
             return Ok(BuildResponse(
@@ -380,6 +433,14 @@ public class GamesController : ControllerBase
                 aiMove
             ));
         }
+    }
+
+    private static IActionResult GameNotFound()
+    {
+        return new NotFoundObjectResult(new
+        {
+            message = "Game not found"
+        });
     }
 
     private static bool Blocked(
@@ -399,9 +460,7 @@ public class GamesController : ControllerBase
             return true;
         }
 
-        if (IsBoardGameOver(
-            session.Game.GetGameStatus()
-        ))
+        if (IsBoardGameOver(session.Game.GetGameStatus()))
         {
             reason = "The game is already over";
             return true;
@@ -422,9 +481,7 @@ public class GamesController : ControllerBase
     )
     {
         if (status != "Checkmate")
-        {
             return null;
-        }
 
         return whiteTurn ? "Black" : "White";
     }
@@ -437,27 +494,28 @@ public class GamesController : ControllerBase
         string? aiMove = null
     )
     {
+        session.Clock.Tick();
+
         GameState state = session.Game.GetGameState();
         string boardStatus = session.Game.GetGameStatus();
 
-        bool timedOut =
-            session.Clock.TimeoutWinner is not null;
+        bool timedOut = session.Clock.TimeoutWinner is not null;
 
         string status = timedOut
             ? "Timeout"
             : boardStatus;
 
-        bool gameOver =
-            timedOut || IsBoardGameOver(boardStatus);
+        bool gameOver = timedOut || IsBoardGameOver(boardStatus);
 
         string? winner =
             session.Clock.TimeoutWinner ??
             GetWinner(boardStatus, state.WhiteTurn);
 
         if (gameOver)
-        {
             session.Clock.Stop();
-        }
+
+        if (id != Guid.Empty)
+            SaveSession(id, session);
 
         return new
         {
@@ -466,17 +524,14 @@ public class GamesController : ControllerBase
             difficulty,
             aiMove,
             board = state.Board,
-            currentPlayer = state.WhiteTurn
-                ? "White"
-                : "Black",
+            currentPlayer = state.WhiteTurn ? "White" : "Black",
             history = state.History,
             captured = state.Captured,
             status,
             gameOver,
             winner,
             gameStarted = session.Clock.Started,
-            timeControlMinutes =
-                session.Clock.TimeControlMinutes,
+            timeControlMinutes = session.Clock.TimeControlMinutes,
             whiteTimeMs = Math.Ceiling(
                 session.Clock.WhiteMilliseconds
             ),
