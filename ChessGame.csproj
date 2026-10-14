@@ -15,4 +15,10 @@
     <InternalsVisibleTo Include="ChessGame.Tests" />
   </ItemGroup>
 
+
+  <ItemGroup>
+    <Compile Remove="ChessGame.Api/**/*.cs" />
+  </ItemGroup>
+
+
 </Project>

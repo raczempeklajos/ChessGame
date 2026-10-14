@@ -4,3 +4,6 @@ obj/
 .vscode/
 *.user
 chess-save.json
+
+# macOS metadata
+.DS_Store
