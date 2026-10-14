@@ -422,3 +422,62 @@
     max-width: 280px;
   }
 }
+
+
+/* Chess clocks */
+.chess-clocks {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.chess-clock {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px;
+  border: 2px solid #d1d5db;
+  border-radius: 12px;
+  background: #f3f4f6;
+  color: #111827;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.chess-clock.clock-active {
+  border-color: #16a34a;
+  background: #dcfce7;
+}
+
+.chess-clock.clock-low {
+  border-color: #dc2626;
+  background: #fee2e2;
+}
+
+.clock-player {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.clock-time {
+  font-size: 28px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+@media (max-width: 600px) {
+  .chess-clocks {
+    gap: 8px;
+  }
+
+  .chess-clock {
+    flex-direction: column;
+    padding: 12px 8px;
+  }
+
+  .clock-time {
+    font-size: 24px;
+  }
+}
