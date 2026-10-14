@@ -11,16 +11,14 @@ namespace ChessGameApi.Models;
 public class MoveRequest
 {
     /// <summary>
-    /// Gets or sets the source square of the move (e.g., "e2").
-    /// Must be a valid chessboard coordinate.
+    /// Gets or sets the source square of the move.
     /// </summary>
     [Required]
     [RegularExpression("^[a-h][1-8]$")]
     public string From { get; set; } = "";
 
     /// <summary>
-    /// Gets or sets the destination square of the move (e.g., "e4").
-    /// Must be a valid chessboard coordinate.
+    /// Gets or sets the destination square of the move.
     /// </summary>
     [Required]
     [RegularExpression("^[a-h][1-8]$")]
@@ -28,9 +26,8 @@ public class MoveRequest
 
     /// <summary>
     /// Gets or sets the optional promotion piece.
-    /// Accepted values are "q" (queen), "r" (rook),
-    /// "b" (bishop), and "n" (knight).
+    /// Accepts queen, rook, bishop, or knight.
     /// </summary>
-    [RegularExpression("^[qrbn]$")]
+    [RegularExpression("^[qrbnQRBN]$")]
     public string? Promotion { get; set; }
 }

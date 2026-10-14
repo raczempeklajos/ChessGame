@@ -5,6 +5,15 @@ export interface GameState {
   currentPlayer: string;
   history: string[];
   message?: string;
+  captured: string[];
+  status: "Playing" | "Check" | "Checkmate" | "Stalemate";
+  gameOver: boolean;
+  winner: string | null;
+}
+
+export interface LegalMovesResponse {
+  from: string;
+  legalMoves: string[];
 }
 
 const API_BASE = "/api/games";
@@ -28,6 +37,7 @@ export async function createGame(): Promise<GameState> {
 
 export async function getGame(gameId: string): Promise<GameState> {
   const response = await fetch(`${API_BASE}/${gameId}`);
+
   return readResponse<GameState>(response);
 }
 
@@ -48,12 +58,6 @@ export async function makeMove(
   return readResponse<GameState>(response);
 }
 
-
-export interface LegalMovesResponse {
-  from: string;
-  legalMoves: string[];
-}
-
 export async function getLegalMoves(
   gameId: string,
   from: string
@@ -63,4 +67,30 @@ export async function getLegalMoves(
   );
 
   return readResponse<LegalMovesResponse>(response);
+}
+
+
+export async function undoMove(gameId: string): Promise<GameState> {
+  const response = await fetch(`/api/games/${gameId}/undo`, {
+    method: "POST",
+  });
+
+  return readResponse<GameState>(response);
+}
+
+export interface AiMoveResponse extends GameState {
+  aiMove: string;
+}
+
+export async function makeAiMove(
+  gameId: string
+): Promise<AiMoveResponse> {
+  const response = await fetch(
+    `/api/games/${gameId}/ai-move`,
+    {
+      method: "POST",
+    }
+  );
+
+  return readResponse<AiMoveResponse>(response);
 }

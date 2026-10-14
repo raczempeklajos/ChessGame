@@ -90,6 +90,26 @@ public class ChessGame
     }
 
 
+        /// <summary>
+        /// Returns the current status of the chess game.
+        /// </summary>
+        public string GetGameStatus()
+        {
+            bool inCheck = validator.IsKingInCheck(whiteTurn);
+            bool hasLegalMoves = validator.HasLegalMoves(whiteTurn);
+
+            if (inCheck && !hasLegalMoves)
+                return "Checkmate";
+
+            if (!inCheck && !hasLegalMoves)
+                return "Stalemate";
+
+            if (inCheck)
+                return "Check";
+
+            return "Playing";
+        }
+
 
     /// <summary>
 
@@ -498,6 +518,20 @@ public class ChessGame
         Pause();
 
     }
+
+
+public bool TryUndoMove()
+{
+    if (undoStack.Count == 0)
+    {
+        return false;
+    }
+
+    RestoreSnapshot(undoStack.Pop());
+
+    return true;
+}
+
 
     /// <summary>
 

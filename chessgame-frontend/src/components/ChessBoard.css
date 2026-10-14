@@ -174,3 +174,251 @@
 .square.legal-move {
   cursor: pointer;
 }
+
+
+/* Game status notifications */
+
+.game-alert {
+  padding: 14px 18px;
+  margin-bottom: 16px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.check-alert {
+  background: #fff4dc;
+  color: #8a5a13;
+  border: 1px solid #ead4a7;
+}
+
+.game-over-alert {
+  background: #e8eee9;
+  color: #334a3c;
+  border: 1px solid #bdcfc2;
+}
+
+/* Highlight the previous move */
+
+.square.last-move.light {
+  background-color: #f0df9a;
+}
+
+.square.last-move.dark {
+  background-color: #c2aa64;
+}
+
+/* Move history table */
+
+.move-history-scroll {
+  max-height: 260px;
+  overflow-y: auto;
+  overflow-x: auto;
+}
+
+.move-history-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  text-align: left;
+}
+
+.move-history-table th,
+.move-history-table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid #dce2dd;
+}
+
+.move-history-table th {
+  font-weight: 600;
+  background-color: #e8eee9;
+  color: #334a3c;
+}
+
+.move-history-table tbody tr:nth-child(even) {
+  background-color: #f5f7f5;
+}
+
+.move-history-table td:first-child {
+  width: 45px;
+  color: #6b756e;
+  font-weight: 600;
+}
+
+
+/* Pawn promotion dialog */
+
+.promotion-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.promotion-dialog {
+  background: #ffffff;
+  padding: 24px;
+  border-radius: 12px;
+  text-align: center;
+  width: min(360px, 90vw);
+  box-sizing: border-box;
+}
+
+.promotion-dialog h3 {
+  margin: 0 0 20px;
+  color: #263a2c;
+}
+
+.promotion-options {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+
+.promotion-options button {
+  font-size: 40px;
+  cursor: pointer;
+  border: 1px solid #bdcfc2;
+  border-radius: 8px;
+  background: #f5f7f5;
+  padding: 10px 0;
+  color: #263a2c;
+}
+
+.promotion-options button:hover {
+  background: #e8eee9;
+}
+
+.promotion-options button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+
+.undo-button {
+  padding: 10px 18px;
+  border: none;
+  border-radius: 8px;
+  background-color: #475569;
+  color: white;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.undo-button:hover:not(:disabled) {
+  background-color: #334155;
+}
+
+.undo-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.flip-button {
+  padding: 10px 18px;
+  border: none;
+  border-radius: 8px;
+  background-color: #475569;
+  color: white;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.flip-button:hover {
+  background-color: #334155;
+}
+
+.captured-pieces {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.captured-group {
+  flex: 1 1 180px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: #f1f5f9;
+  color: #1e293b;
+}
+
+.captured-group h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.captured-symbols {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-height: 32px;
+  align-items: center;
+  font-size: 27px;
+}
+
+.captured-empty {
+  font-size: 13px;
+  color: #64748b;
+}
+
+
+/* Game mode selector */
+
+.game-mode-selector {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.game-mode-selector span {
+  font-weight: 600;
+}
+
+.game-mode-selector button {
+  padding: 10px 16px;
+  border: 1px solid #777;
+  border-radius: 8px;
+  background: #f5f5f5;
+  color: #222;
+  cursor: pointer;
+  font-weight: 500;
+  transition: background 0.2s ease;
+}
+
+.game-mode-selector button:hover:not(:disabled) {
+  background: #e0e0e0;
+}
+
+.game-mode-selector button.mode-active {
+  background: #2e7d32;
+  color: white;
+  border-color: #2e7d32;
+}
+
+.game-mode-selector button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@media (max-width: 600px) {
+  .game-mode-selector {
+    flex-direction: column;
+  }
+
+  .game-mode-selector button {
+    width: 100%;
+    max-width: 280px;
+  }
+}

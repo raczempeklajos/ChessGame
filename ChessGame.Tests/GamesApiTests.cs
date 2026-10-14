@@ -136,4 +136,271 @@ public class GamesApiTests : IClassFixture<WebApplicationFactory<ApiProgram>>
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
+
+
+[Theory]
+[InlineData("Q")]
+[InlineData("R")]
+[InlineData("B")]
+[InlineData("N")]
+[InlineData("q")]
+[InlineData("r")]
+[InlineData("b")]
+[InlineData("n")]
+public async Task MakeMove_WithValidPromotionFormat_IsAcceptedByValidation(
+    string promotion)
+{
+    var createResponse = await client.PostAsync("/api/games", null);
+
+    using var createJson = JsonDocument.Parse(
+        await createResponse.Content.ReadAsStringAsync());
+
+    string id = createJson.RootElement
+        .GetProperty("id").GetString()!;
+
+    // The promotion format is valid, but this move is illegal
+    // because the pawn is not on the promotion rank.
+    var response = await client.PostAsJsonAsync(
+        $"/api/games/{id}/moves",
+        new
+        {
+            from = "e2",
+            to = "e4",
+            promotion
+        });
+
+    Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+    using var result = JsonDocument.Parse(
+        await response.Content.ReadAsStringAsync());
+
+    // The request reached the chess engine rather than
+    // being rejected by ASP.NET Core model validation.
+    Assert.Equal(
+        "Invalid move",
+        result.RootElement.GetProperty("message").GetString());
+}
+
+[Theory]
+[InlineData("x")]
+[InlineData("k")]
+[InlineData("queen")]
+public async Task MakeMove_WithInvalidPromotionFormat_ReturnsBadRequest(
+    string promotion)
+{
+    var createResponse = await client.PostAsync("/api/games", null);
+
+    using var createJson = JsonDocument.Parse(
+        await createResponse.Content.ReadAsStringAsync());
+
+    string id = createJson.RootElement
+        .GetProperty("id").GetString()!;
+
+    var response = await client.PostAsJsonAsync(
+        $"/api/games/{id}/moves",
+        new
+        {
+            from = "e2",
+            to = "e4",
+            promotion
+        });
+
+    Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+    using var result = JsonDocument.Parse(
+        await response.Content.ReadAsStringAsync());
+
+    // Model validation rejects the invalid promotion format.
+    Assert.True(
+        result.RootElement.TryGetProperty("errors", out _));
+}
+
+
+[Fact]
+public async Task Promotion_ThroughApi_ShouldUpdateBoardAndHistory()
+{
+    // Create a new game.
+    var createResponse = await client.PostAsync("/api/games", null);
+
+    using var createJson = JsonDocument.Parse(
+        await createResponse.Content.ReadAsStringAsync());
+
+    string id = createJson.RootElement
+        .GetProperty("id").GetString()!;
+
+    // Move the white pawn from a2 to a8 through legal moves.
+    string[] moves =
+    {
+        "a2 a4",
+        "b7 b5",
+        "a4 b5",
+        "a7 a6",
+        "b5 b6",
+        "g7 g6",
+        "b6 b7",
+        "g6 g5"
+    };
+
+    foreach (string move in moves)
+    {
+        string[] squares = move.Split(' ');
+
+        var response = await client.PostAsJsonAsync(
+            $"/api/games/{id}/moves",
+            new
+            {
+                from = squares[0],
+                to = squares[1]
+            });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    // Promote the pawn to a knight.
+    var promotionResponse = await client.PostAsJsonAsync(
+        $"/api/games/{id}/moves",
+        new
+        {
+            from = "b7",
+            to = "a8",
+            promotion = "N"
+        });
+
+    Assert.Equal(HttpStatusCode.OK, promotionResponse.StatusCode);
+
+    using var result = JsonDocument.Parse(
+        await promotionResponse.Content.ReadAsStringAsync());
+
+    string[] board = result.RootElement
+        .GetProperty("board")
+        .EnumerateArray()
+        .Select(x => x.GetString()!)
+        .ToArray();
+
+    Assert.Equal('N', board[0][0]);
+
+    string[] history = result.RootElement
+        .GetProperty("history")
+        .EnumerateArray()
+        .Select(x => x.GetString()!)
+        .ToArray();
+
+    Assert.Contains("b7-a8=N", history);
+}
+
+
+[Fact]
+public async Task UndoMove_AfterValidMove_RestoresPreviousState()
+{
+    // Create a new game.
+    var createResponse = await client.PostAsync("/api/games", null);
+
+    using var createJson = JsonDocument.Parse(
+        await createResponse.Content.ReadAsStringAsync());
+
+    string id = createJson.RootElement
+        .GetProperty("id").GetString()!;
+
+    // Make a legal opening move.
+    var moveResponse = await client.PostAsJsonAsync(
+        $"/api/games/{id}/moves",
+        new
+        {
+            from = "e2",
+            to = "e4"
+        });
+
+    Assert.Equal(HttpStatusCode.OK, moveResponse.StatusCode);
+
+    // Undo the move.
+    var undoResponse = await client.PostAsync(
+        $"/api/games/{id}/undo", null);
+
+    Assert.Equal(HttpStatusCode.OK, undoResponse.StatusCode);
+
+    using var result = JsonDocument.Parse(
+        await undoResponse.Content.ReadAsStringAsync());
+
+    string[] board = result.RootElement
+        .GetProperty("board")
+        .EnumerateArray()
+        .Select(x => x.GetString()!)
+        .ToArray();
+
+    // The white pawn returns to e2.
+    Assert.Equal('P', board[6][4]);
+    Assert.Equal('.', board[4][4]);
+
+    // White should be the active player again.
+    Assert.Equal(
+        "White",
+        result.RootElement.GetProperty("currentPlayer").GetString());
+
+    // The move history should be empty.
+    Assert.Empty(
+        result.RootElement.GetProperty("history").EnumerateArray());
+}
+
+[Fact]
+public async Task UndoMove_WithoutPreviousMoves_ReturnsBadRequest()
+{
+    var createResponse = await client.PostAsync("/api/games", null);
+
+    using var createJson = JsonDocument.Parse(
+        await createResponse.Content.ReadAsStringAsync());
+
+    string id = createJson.RootElement
+        .GetProperty("id").GetString()!;
+
+    var response = await client.PostAsync(
+        $"/api/games/{id}/undo", null);
+
+    Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+}
+
+[Fact]
+public async Task AiMove_ShouldMakeLegalBlackMove()
+{
+    // Arrange: create a new game.
+    var createResponse = await client.PostAsync("/api/games", null);
+    createResponse.EnsureSuccessStatusCode();
+
+    using var createdJson = JsonDocument.Parse(
+        await createResponse.Content.ReadAsStringAsync());
+
+    string gameId = createdJson.RootElement
+        .GetProperty("id")
+        .GetString()!;
+
+    // White makes the first move.
+    var whiteMove = await client.PostAsJsonAsync(
+        $"/api/games/{gameId}/moves",
+        new { from = "e2", to = "e4" });
+
+    whiteMove.EnsureSuccessStatusCode();
+
+    // Act: computer makes a move with black pieces.
+    var aiResponse = await client.PostAsync(
+        $"/api/games/{gameId}/ai-move", null);
+
+    // Assert
+    Assert.Equal(HttpStatusCode.OK, aiResponse.StatusCode);
+
+    using var aiJson = JsonDocument.Parse(
+        await aiResponse.Content.ReadAsStringAsync());
+
+    var result = aiJson.RootElement;
+
+    Assert.Equal(
+        "White",
+        result.GetProperty("currentPlayer").GetString());
+
+    Assert.Equal(
+        2,
+        result.GetProperty("history").GetArrayLength());
+
+    Assert.False(string.IsNullOrWhiteSpace(
+        result.GetProperty("aiMove").GetString()));
+}
+
 }

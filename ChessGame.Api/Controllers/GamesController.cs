@@ -19,8 +19,6 @@ public class GamesController : ControllerBase
     /// <summary>
     /// Retrieves the current state of an existing chess game.
     /// </summary>
-    /// <param name="id">The unique identifier of the game.</param>
-    /// <returns>The game state or a 404 response if the game does not exist.</returns>
     [HttpGet("{id:guid}")]
     public IActionResult GetGame(Guid id)
     {
@@ -33,11 +31,12 @@ public class GamesController : ControllerBase
         }
 
         GameState state;
+        string status;
 
-        // Synchronize access to the game while creating a state snapshot.
         lock (game)
         {
             state = game.GetGameState();
+            status = game.GetGameStatus();
         }
 
         return Ok(new
@@ -45,51 +44,57 @@ public class GamesController : ControllerBase
             id,
             board = state.Board,
             currentPlayer = state.WhiteTurn ? "White" : "Black",
-            history = state.History
+            history = state.History,
+            captured = state.Captured,
+            status,
+            gameOver = status is "Checkmate" or "Stalemate",
+            winner = GetWinner(status, state.WhiteTurn)
         });
     }
 
     /// <summary>
     /// Returns a chessboard in its standard starting position.
     /// </summary>
-    /// <returns>The initial board, current player, and empty move history.</returns>
     [HttpGet("board")]
     public IActionResult GetBoard()
     {
         var game = new ChessGame();
-
         game.NewGame();
 
         GameState state = game.GetGameState();
+        string status = game.GetGameStatus();
 
         return Ok(new
         {
             board = state.Board,
             currentPlayer = state.WhiteTurn ? "White" : "Black",
-            history = state.History
+            history = state.History,
+            captured = state.Captured,
+            status,
+            gameOver = status is "Checkmate" or "Stalemate",
+            winner = GetWinner(status, state.WhiteTurn)
         });
     }
 
     /// <summary>
     /// Creates a new chess game and assigns it a unique identifier.
     /// </summary>
-    /// <returns>The new game identifier and its initial state.</returns>
     [HttpPost]
     public IActionResult CreateGame()
     {
         var game = new ChessGame();
         game.NewGame();
 
-        // Generate a unique identifier and register the new game.
         Guid gameId = Guid.NewGuid();
-
         games.TryAdd(gameId, game);
 
         GameState state;
+        string status;
 
         lock (game)
         {
             state = game.GetGameState();
+            status = game.GetGameStatus();
         }
 
         return Ok(new
@@ -98,21 +103,17 @@ public class GamesController : ControllerBase
             message = "New chess game created",
             board = state.Board,
             currentPlayer = state.WhiteTurn ? "White" : "Black",
-            history = state.History
+            history = state.History,
+            captured = state.Captured,
+            status,
+            gameOver = status is "Checkmate" or "Stalemate",
+            winner = GetWinner(status, state.WhiteTurn)
         });
     }
 
     /// <summary>
     /// Attempts to execute a chess move in an existing game.
     /// </summary>
-    /// <param name="id">The unique identifier of the game.</param>
-    /// <param name="request">
-    /// The source square, destination square, and optional promotion piece.
-    /// </param>
-    /// <returns>
-    /// The updated game state, or an error response if the game
-    /// does not exist or the move is invalid.
-    /// </returns>
     [HttpPost("{id:guid}/moves")]
     public IActionResult MakeMove(Guid id, [FromBody] MoveRequest request)
     {
@@ -124,20 +125,39 @@ public class GamesController : ControllerBase
             });
         }
 
-        // Convert the API request into the move format expected by the engine.
+        if (string.IsNullOrWhiteSpace(request.From) ||
+            string.IsNullOrWhiteSpace(request.To))
+        {
+            return BadRequest(new
+            {
+                message = "Source and destination squares are required"
+            });
+        }
+
         string move = $"{request.From} {request.To}";
 
-        // Include the promotion piece when pawn promotion is requested.
         if (!string.IsNullOrWhiteSpace(request.Promotion))
         {
             move += $" {request.Promotion}";
         }
 
         GameState state;
+        string status;
 
-        // Prevent simultaneous moves from modifying the same game.
         lock (game)
         {
+            // Prevent moves after checkmate or stalemate.
+            string currentStatus = game.GetGameStatus();
+
+            if (currentStatus is "Checkmate" or "Stalemate")
+            {
+                return BadRequest(new
+                {
+                    message = "The game is already over",
+                    status = currentStatus
+                });
+            }
+
             if (!game.MovePiece(move))
             {
                 return BadRequest(new
@@ -146,8 +166,8 @@ public class GamesController : ControllerBase
                 });
             }
 
-            // Capture the updated state after the move is completed.
             state = game.GetGameState();
+            status = game.GetGameStatus();
         }
 
         return Ok(new
@@ -156,20 +176,17 @@ public class GamesController : ControllerBase
             message = "Move completed",
             board = state.Board,
             currentPlayer = state.WhiteTurn ? "White" : "Black",
-            history = state.History
+            history = state.History,
+            captured = state.Captured,
+            status,
+            gameOver = status is "Checkmate" or "Stalemate",
+            winner = GetWinner(status, state.WhiteTurn)
         });
     }
-
 
     /// <summary>
     /// Returns all legal destination squares for a selected piece.
     /// </summary>
-    /// <param name="id">The unique identifier of the game.</param>
-    /// <param name="from">The source square in algebraic notation.</param>
-    /// <returns>
-    /// The legal destination squares, or an error if the game
-    /// does not exist or the source coordinate is invalid.
-    /// </returns>
     [HttpGet("{id:guid}/legal-moves")]
     public IActionResult GetLegalMoves(Guid id, [FromQuery] string? from)
     {
@@ -193,11 +210,15 @@ public class GamesController : ControllerBase
         }
 
         List<string> legalMoves;
+        string status;
 
-        // Synchronize access while the engine evaluates possible moves.
         lock (game)
         {
-            legalMoves = game.GetLegalMoves(from);
+            status = game.GetGameStatus();
+
+            legalMoves = status is "Checkmate" or "Stalemate"
+                ? new List<string>()
+                : game.GetLegalMoves(from);
         }
 
         return Ok(new
@@ -207,5 +228,133 @@ public class GamesController : ControllerBase
         });
     }
 
+    /// <summary>
+    /// Returns the winner if the game ended in checkmate.
+    /// </summary>
+    private static string? GetWinner(string status, bool whiteTurn)
+    {
+        if (status != "Checkmate")
+        {
+            return null;
+        }
 
+        // The player whose turn it is has been checkmated.
+        return whiteTurn ? "Black" : "White";
+    }
+
+    /// <summary>
+    /// Undoes the last move of an existing chess game.
+    /// </summary>
+    [HttpPost("{id:guid}/undo")]
+    public IActionResult UndoMove(Guid id)
+    {
+        if (!games.TryGetValue(id, out ChessGame? game))
+        {
+            return NotFound(new { message = "Game not found" });
+        }
+
+        GameState state;
+        string status;
+
+        lock (game)
+        {
+            if (!game.TryUndoMove())
+            {
+                return BadRequest(new
+                {
+                    message = "No moves to undo"
+                });
+            }
+
+            state = game.GetGameState();
+            status = game.GetGameStatus();
+        }
+
+        return Ok(new
+        {
+            id,
+            message = "Last move undone",
+            board = state.Board,
+            currentPlayer = state.WhiteTurn ? "White" : "Black",
+            history = state.History,
+            captured = state.Captured,
+            status,
+            gameOver = status is "Checkmate" or "Stalemate",
+            winner = GetWinner(status, state.WhiteTurn)
+        });
+    }
+
+    /// <summary>
+    /// Makes a computer move using Minimax.
+    /// </summary>
+    [HttpPost("{id:guid}/ai-move")]
+    public IActionResult MakeAiMove(Guid id)
+    {
+        if (!games.TryGetValue(id, out ChessGame? game))
+        {
+            return NotFound(new { message = "Game not found" });
+        }
+
+        lock (game)
+        {
+            // The computer plays with black pieces.
+            if (game.GetGameState().WhiteTurn)
+            {
+                return BadRequest(new
+                {
+                    message = "It is White's turn"
+                });
+            }
+
+            string currentStatus = game.GetGameStatus();
+
+            if (currentStatus is "Checkmate" or "Stalemate")
+            {
+                return BadRequest(new
+                {
+                    message = "The game is already over"
+                });
+            }
+
+            ChessAI ai = new ChessAI(game);
+
+            // Minimax search with depth 2.
+            string? aiMove = ai.GetMinimaxMove(false, 2);
+
+            if (aiMove == null)
+            {
+                return BadRequest(new
+                {
+                    message = "No legal moves available"
+                });
+            }
+
+            bool success = game.MovePiece(aiMove);
+
+            if (!success)
+            {
+                return BadRequest(new
+                {
+                    message = "AI move could not be executed"
+                });
+            }
+
+            GameState state = game.GetGameState();
+            string status = game.GetGameStatus();
+
+            return Ok(new
+            {
+                id,
+                message = "AI move completed",
+                aiMove,
+                board = state.Board,
+                currentPlayer = state.WhiteTurn ? "White" : "Black",
+                history = state.History,
+                captured = state.Captured,
+                status,
+                gameOver = status is "Checkmate" or "Stalemate",
+                winner = GetWinner(status, state.WhiteTurn)
+            });
+        }
+    }
 }
