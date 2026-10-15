@@ -1,3 +1,4 @@
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Register MVC controllers.
@@ -6,16 +7,17 @@ builder.Services.AddControllers();
 // Register OpenAPI services.
 builder.Services.AddOpenApi();
 
-// Allow the local React development server.
+// Configure allowed frontend origins.
+var allowedOrigins = builder.Configuration
+    .GetSection("Cors:AllowedOrigins")
+    .Get<string[]>() ?? Array.Empty<string>();
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("ReactFrontend", policy =>
     {
         policy
-            .WithOrigins(
-                "http://localhost:5173",
-                "http://127.0.0.1:5173"
-            )
+            .WithOrigins(allowedOrigins)
             .AllowAnyHeader()
             .AllowAnyMethod();
     });
