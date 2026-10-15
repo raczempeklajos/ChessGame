@@ -1,0 +1,9 @@
+
+{
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://lajos-chessgame-api.onrender.com/api/:path*"
+    }
+  ]
+}

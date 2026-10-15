@@ -1,0 +1,26 @@
+/* Application layout */
+
+#root {
+  width: 100%;
+  min-height: 100vh;
+}
+
+.site-wrapper {
+  width: 100%;
+}
+
+/* Chess game section */
+
+.hero {
+  position: relative;
+  width: 100%;
+}
+
+.board-section {
+  min-width: 0;
+}
+
+.chess-game {
+  width: 100%;
+  min-width: 0;
+}

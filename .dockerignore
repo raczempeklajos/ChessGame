@@ -1,0 +1,15 @@
+
+.git
+.github
+**/bin
+**/obj
+**/node_modules
+**/dist
+**/.DS_Store
+**/*.db
+**/*.db-shm
+**/*.db-wal
+chessgame-frontend
+ChessGame.Tests
+screenshots
+chess-save.json

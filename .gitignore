@@ -1,6 +1,28 @@
+# Frontend
+node_modules/
+dist/
+
+# Local backups
+*.backup
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# SQLite databases
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
 bin/
 obj/
 .vs/
 .vscode/
 *.user
 chess-save.json
+
+# macOS metadata
+.DS_Store
