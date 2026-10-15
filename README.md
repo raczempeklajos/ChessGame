@@ -1,3 +1,40 @@
+## ♟️ Live Demo
+
+**[Play Chess Online ↗](https://chess-game-indol.vercel.app)**
+
+ChessGame is a full-stack chess application built with React, TypeScript, C# and ASP.NET Core.
+
+The application can be played directly in your browser without installing any additional software.
+
+### Technologies
+
+**Frontend**
+- React
+- TypeScript
+- Vite
+
+**Backend**
+- C#
+- ASP.NET Core Web API
+- SQLite
+
+**Deployment**
+- Vercel — frontend hosting
+- Render — backend hosting
+
+### Architecture
+
+The React frontend communicates with the ASP.NET Core backend through REST API endpoints.
+
+The backend handles game logic and data persistence, while the frontend provides the interactive chess interface.
+
+### Hosting Notes
+
+The backend runs on Render's free hosting tier. After a period of inactivity, the service may enter sleep mode, causing the first request to take longer.
+
+SQLite data is stored on the server's local filesystem and may be lost when the service restarts or is redeployed.
+
+
 # ChessGame ♟️
 
 A chess application developed in **C# using .NET 10**, featuring a console-based interface, complete chess rule validation, and a computer opponent powered by the Minimax algorithm.
